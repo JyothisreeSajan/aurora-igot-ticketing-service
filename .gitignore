@@ -1,0 +1,43 @@
+# Virtual environments
+venv/
+.venv/
+env/
+venv_old/
+
+# Environment configuration
+.env
+.env.local
+
+# Python caches & artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# IDE & OS files
+.vscode/
+.idea/
+.DS_Store
+.gemini/
+*.swp
+*.swo
+*~
+
+# Logs & scratch output
+*.log
+output.txt
+=0.10.0
+
+# Data files, scripts & ticket dumps
+seed_tickets.py
+test_es_agg.py
+Allocation_28.10.csv
+processed_ticket_*.json
+ticket_*.json
+tickets_*.json
+test_tickets.json
