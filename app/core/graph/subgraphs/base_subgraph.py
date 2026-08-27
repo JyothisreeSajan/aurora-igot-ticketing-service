@@ -282,7 +282,7 @@ class BaseSubgraph(ABC):
             plan_content += f"\n\n[QUALITY GATE FEEDBACK]\n{state.get('quality_gate_feedback')}"
 
         messages = [
-            SystemMessage(content=BASE_DECIDE_SYSTEM),
+            SystemMessage(content=self.system_prompt(state) + "\n\n" + BASE_DECIDE_SYSTEM),
             HumanMessage(content=BASE_DECIDE_HUMAN_MESSAGE.format(
                 current_time=current_time,
                 main_category=main_category,

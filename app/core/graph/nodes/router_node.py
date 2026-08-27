@@ -11,9 +11,9 @@ specialist subgraph should handle the ticket:
   - courses_subgraph                  : enrollment, progress, content, external portals
   - login_and_registration_subgraph   : login, email/mobile update, multi-account
   - profile_update_subgraph           : verification, designation, leaderboard
+  - ca_apar_subgraph                  : APAR/training plan not visible, unexpected courses, wrong plan assigned
 
   Stub (→ support ticket until SOP is built):
-  - ca_apar_subgraph                  : APAR training plan / assessment issues
   - organisation_subgraph             : domain, MDO, ATI/CTI, deletion requests
   - user_service_request_subgraph     : account/email/designation/role update requests
   - mobile_application_subgraph       : app not loading
@@ -58,8 +58,8 @@ CATEGORY_ROUTING_RULES = [
     (["course"],                                           "courses_subgraph"),
     (["login_issue", "login"],                            "login_and_registration_subgraph"),
     (["profile_update"],                                   "profile_update_subgraph"),
-    # ── Stub subgraphs (create support ticket until SOP is built) ──────────────
     (["ca_apar_issue", "ca_apar", "apar"],               "ca_apar_subgraph"),
+    # ── Stub subgraphs (create support ticket until SOP is built) ──────────────
     (["organisation_request", "organisation"],            "organisation_subgraph"),
     (["user_service_request"],                             "user_service_request_subgraph"),
     (["mobile_application"],                               "mobile_application_subgraph"),
