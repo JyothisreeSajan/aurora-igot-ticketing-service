@@ -17,8 +17,8 @@ Flow:
     │    courses_subgraph               → promote_draft        │
     │    login_and_registration_subgraph  → quality_gate       │
     │    profile_update_subgraph                               │
-    │  Stubs (escalate to support ticket)                      │
     │    ca_apar_subgraph                                      │
+    │  Stubs (escalate to support ticket)                      │
     │    organisation_subgraph                                 │
     │    user_service_request_subgraph                         │
     │    general_query_subgraph                                │
@@ -51,7 +51,7 @@ from app.core.graph.nodes.intake_node import intake_node
 from app.core.graph.nodes.router_node import route_decision, router_node
 from app.core.graph.state import TicketState
 
-# ── Stub subgraphs (pending full SOP implementation) ─────────────────────────
+# ── Subgraph imports (see module docstring above for implemented vs. stub) ───
 from app.core.graph.subgraphs.ca_apar_subgraph import ca_apar_subgraph
 from app.core.graph.subgraphs.certificate_subgraph import certificate_subgraph
 from app.core.graph.subgraphs.courses_subgraph import courses_subgraph
@@ -160,7 +160,7 @@ def run_profile_update_subgraph(state: TicketState) -> TicketState:
 
 def run_ca_apar_subgraph(state: TicketState) -> TicketState:
     tid = state.get("ticket_id", "unknown")
-    logger.info(f"[main_graph] ca_apar_subgraph (stub) — ticket={tid}")
+    logger.info(f"[main_graph] ca_apar_subgraph — ticket={tid}")
     return {**state, **ca_apar_subgraph.invoke(state)}
 
 
@@ -350,8 +350,8 @@ def _build_graph() -> "CompiledGraph":
     g.add_node("courses_subgraph",                  run_courses_subgraph)
     g.add_node("login_and_registration_subgraph",   run_login_and_registration_subgraph)
     g.add_node("profile_update_subgraph",           run_profile_update_subgraph)
-    # Stub subgraphs
     g.add_node("ca_apar_subgraph",                  run_ca_apar_subgraph)
+    # Stub subgraphs
     g.add_node("organisation_subgraph",             run_organisation_subgraph)
     g.add_node("user_service_request_subgraph",     run_user_service_request_subgraph)
     g.add_node("general_query_subgraph",            run_general_query_subgraph)
@@ -384,8 +384,8 @@ def _build_graph() -> "CompiledGraph":
             "courses_subgraph":                  "courses_subgraph",
             "login_and_registration_subgraph":   "login_and_registration_subgraph",
             "profile_update_subgraph":           "profile_update_subgraph",
-            # Stubs
             "ca_apar_subgraph":                  "ca_apar_subgraph",
+            # Stubs
             "organisation_subgraph":             "organisation_subgraph",
             "user_service_request_subgraph":     "user_service_request_subgraph",
             "general_query_subgraph":            "general_query_subgraph",
@@ -400,8 +400,9 @@ def _build_graph() -> "CompiledGraph":
         # Fully implemented
         "certificate_subgraph", "courses_subgraph",
         "login_and_registration_subgraph", "profile_update_subgraph",
+        "ca_apar_subgraph",
         # Stubs
-        "ca_apar_subgraph", "organisation_subgraph", "user_service_request_subgraph",
+        "organisation_subgraph", "user_service_request_subgraph",
         "general_query_subgraph", "mobile_application_subgraph",
         "virtual_event_subgraph", "program_subgraph",
     ):
