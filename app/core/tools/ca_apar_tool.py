@@ -201,11 +201,107 @@ def get_user_cbp_plan(email: str) -> str:
         })
 
 
+def _flatten_cap(c: dict) -> dict:
+    """Extract slim, LLM-friendly fields from a raw CAP assignment entry.
+
+    The link is constructed the same way the reference flow's action_button
+    does — {portal_base_url}/app/toc/{identifier}/overview — confirmed to
+    return HTTP 200 for a real assignment, not fabricated. None of the raw
+    fields (childNodes, leafNodes, batches, images, etc.) are kept, since that
+    much detail invites the response to describe things the SOP never asked
+    for.
+    """
+    identifier = c.get("identifier")
+    link = f"{IGOT_API_HOST_URL}/app/toc/{identifier}/overview" if identifier else None
+    return {
+        "cap_id":    identifier,
+        "cap_name":  c.get("name"),
+        "end_date":  c.get("endDate"),
+        "link":      link,
+        # Pre-built so the LLM copies this verbatim instead of constructing its
+        # own <a> tag — guarantees it's a real clickable hyperlink, not raw text.
+        # Display text is the URL itself, not a "click here" phrase.
+        "link_html": f'<a href="{link}" target="_blank" rel="noopener noreferrer">{link}</a>' if link else None,
+    }
+
+
+@tool
+def get_user_cap_assignment(email: str) -> str:
+    """Fetch the user's assigned Comprehensive Assessment Program (CAP), if any.
+
+    Used in SOP-2 STEP 2 to determine whether a CAP is assigned, and to read its
+    name, link, and due date.
+    """
+    search_url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
+    headers = {
+        "Authorization": f"Bearer {IGOT_KEY}",
+        "Content-Type": "application/json",
+    }
+    try:
+        profile_payload = {"request": {"filters": {"email": email}}}
+        profile_resp = requests.post(search_url, json=profile_payload, headers=headers, timeout=10)
+        profile_resp.raise_for_status()
+        profile_content = profile_resp.json().get("result", {}).get("response", {}).get("content", [])
+        if not profile_content:
+            return json.dumps({
+                "email": "{{USER_EMAIL}}",
+                "found": False,
+                "message": "User profile not found.",
+                "_spoc_replacements": {"{{USER_EMAIL}}": email},
+            })
+
+        user_id = profile_content[0].get("id")
+        if not user_id:
+            return json.dumps({
+                "email": "{{USER_EMAIL}}",
+                "found": False,
+                "message": "User id not available in profile.",
+                "_spoc_replacements": {"{{USER_EMAIL}}": email},
+            })
+
+        cap_url = f"{IGOT_API_HOST_URL}/api/supportportal/admin/user/v2/assignedcourses/{user_id}"
+        cap_headers = {
+            "Authorization": f"Bearer {IGOT_KEY}",
+            "Content-Type": "application/json",
+            "x-authenticated-user-token": "",
+        }
+        cap_resp = requests.post(
+            cap_url,
+            headers=cap_headers,
+            json={"courseCategory": "Comprehensive Assessment Program"},
+            timeout=15,
+        )
+        cap_resp.raise_for_status()
+        cap_data = cap_resp.json()
+
+        raw_assignments = cap_data.get("result", {}).get("content") or []
+        if isinstance(raw_assignments, dict):
+            raw_assignments = [raw_assignments]
+        assignments = [_flatten_cap(c) for c in raw_assignments]
+
+        return json.dumps({
+            "email": "{{USER_EMAIL}}",
+            "found": True,
+            "total_count": len(assignments),
+            "assignments": assignments,
+            "_spoc_replacements": {"{{USER_EMAIL}}": email},
+        }, indent=2, default=str)
+
+    except Exception as e:
+        return json.dumps({
+            "email": "{{USER_EMAIL}}",
+            "found": False,
+            "error": str(e),
+            "_spoc_replacements": {"{{USER_EMAIL}}": email},
+        })
+
+
 def get_ca_apar_tools() -> list:
     """Return all tools for the CaAparSubgraph."""
     return [
         get_user_cbp_plan,
         get_user_enrollments,
+        get_user_cap_assignment,
         get_user_profile,
         get_mdo_details,
         get_yp_am_details,

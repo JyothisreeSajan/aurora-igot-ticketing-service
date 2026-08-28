@@ -19,6 +19,7 @@
 | `get_user_enrollments` | `(email, status_filter=None, content_id=None)` | Fetch enrollment/progress status for the user's assigned courses. Pass `content_id` to check one specific course across the full enrollment history (bypasses the top-20-most-recent cap used when no `content_id` is given) — returns just `course_name` and `completed: true/false` for that course |
 | `get_mdo_details` | `(email)` | Fetch MDO Admin/Leader name and email for the user's organization |
 | `get_yp_am_details` | `(ministry_or_state)` | Fetch YP/AM (SPOC) name, email, and contact details |
+| `get_user_cap_assignment` | `(email)` | Fetch the user's assigned Comprehensive Assessment Program(s) (CAP) — returns `total_count` and `assignments` (each: `cap_id`, `cap_name`, `end_date`, `link`, `link_html`) |
 
 ---
 ---
@@ -298,11 +299,6 @@ for this Edge Case.
 
 **If profile IS verified:**
 
-Tell the user their current profile details as background context, from that same
-`get_user_profile` result — Organization, Designation, Group. Do **not** ask the user to
-confirm these are correct — Aurora generates a response directly, it does not hold a
-back-and-forth conversation.
-
 **[TOOL CALL]**
 ```
 get_mdo_details(email = <user_email>)
@@ -338,3 +334,253 @@ shortly.
 | Profile not verified — guided to verify | ❌ |
 | Edge Case 1/2 — contact found | ❌ |
 | Edge Case 1/2 — neither MDO nor YP found | ✅ |
+
+---
+---
+
+# SOP-2: Comprehensive Assessment Program (CAP) Issues
+
+## Purpose
+Handle cases where a user reports that their Comprehensive Assessment Program (CAP) is not
+visible, or that they are unable to enroll in / have an eligibility issue with / believe an
+incorrect CAP has been assigned.
+
+Covers two subcategories:
+- **Comprehensive Assessment Not Visible**
+- **Comprehensive Assessment Unable to enroll**
+
+---
+
+## Comprehensive Assessment Not Visible
+
+### STEP 1 — Verify Profile Status
+
+**[TOOL CALL]**
+```
+get_user_profile(email = <user_email>)
+```
+
+**If profile is NOT verified.** Resolved. Close. Use EXACTLY this message:
+> "As your profile is currently not verified, we request you to complete the pending profile verification. Once your profile is verified, kindly check the Comprehensive Assessment Program (CAP) again."
+
+**If profile IS verified**, check whether `cadreDetails`, `serviceDetails`, `batch`, and
+`centralDeputation` are populated on that same `get_user_profile` result — this is a
+background check; never ask the user whether they belong to an All India Service.
+
+**Some of the four fields populated but not all (partially complete).** Resolved. Close.
+Use EXACTLY this message:
+> "We found that the following mandatory service-related details are missing from your profile:
+>
+> - Cadre Details
+> - Service Details
+> - Batch Information
+> - Central Deputation Details
+>
+> Kindly update the required details in your profile under the Other Details section. Once the profile is updated successfully, the APAR plans may reflect in your account within 4 hours."
+
+**All four fields empty, OR all four fields populated** → STEP 1A.
+
+---
+
+### STEP 1A — Check if User Named a Specific Wrong Field
+
+Read the user's own message directly — never ask. If the user explicitly states that a
+specific field is wrong (Organization/Department, Designation, Group, Cadre, Service, or
+Batch), use the matching update-flow message from SOP-1 STEP 4A (below) — reproduce it
+exactly, do not write a different version here.
+
+- Organization/Department incorrect → the **Transfer Request** message
+- Designation incorrect → the **Designation Update** message
+- Group/Cadre/Service/Batch incorrect → the **Profile Update** message
+
+> **Transfer Request message:**
+> "To correct your organization mapping, please raise a Transfer Request:
+>
+> 1. Log in to iGOT Karmayogi.
+> 2. Click on the Profile Icon (top-right corner).
+> 3. Click on View Profile.
+> 4. Select Make Transfer Request.
+> 5. Select the correct Organization Name from the dropdown.
+> 6. Choose your Group and Designation (if applicable).
+> 7. Ensure all details are accurate and click Submit.
+>
+> Once approved, kindly recheck the APAR/Training Plan section on your profile."
+
+> **Designation Update message:**
+> "To update your designation, please follow the steps below:
+>
+> 1. Log in to iGOT Karmayogi.
+> 2. Click on View Profile from the top-right menu.
+> 3. Navigate to Primary Details and click the Edit icon.
+> 4. Update the correct Designation.
+> 5. Click Send for Approval to submit the changes — the request will be sent to your MDO Admin for approval.
+>
+> Once approved, kindly recheck the APAR/Training Plan section on your profile."
+
+> **Profile Update message:**
+> "To update your Group or other profile details, please follow the steps below:
+>
+> 1. Log in to iGOT Karmayogi.
+> 2. Click on View Profile from the top-right menu.
+> 3. Navigate to Primary Details and click the Edit icon.
+> 4. Update the correct Group and any other required details.
+> 5. Click Send for Approval to submit the changes — the request will be sent to your MDO Admin for approval.
+>
+> Once approved, kindly recheck the APAR/Training Plan section on your profile."
+
+**If the message does not name a specific field** → STEP 2.
+
+---
+
+### STEP 2 — Verify CAP Assignment
+
+**[TOOL CALL]**
+```
+get_user_cap_assignment(email = <user_email>)
+```
+
+Check whether the user's message names a specific CAP. Match it against `cap_name` values
+case-insensitively and by partial match in either direction (same approach as Edge Case 1's
+course-name matching).
+
+**Named CAP IS found in assignments.** Resolved. Close. Use EXACTLY this message (copy
+`link_html` verbatim for the link — it's already a complete clickable HTML tag, never
+rewrite it or use the plain `link` field):
+> "Upon checking, we found that the Comprehensive Assessment Program (CAP) '[cap_name]' is already assigned to your profile.
+>
+> You can access it directly using the link below:
+> [link_html]"
+
+**Named CAP is NOT found in assignments** → STEP 3, using the named CAP in the message
+instead of a generic reference.
+
+**No specific CAP named:**
+- `total_count = 0` → STEP 3 (no CAP assigned at all — valid regardless of which CAP they meant)
+- `total_count >= 1` → do **not** assume this is the CAP they meant, even if there's only one — they may be asking about something unrelated to their own assignments. Set `needs_clarification=true`. Use EXACTLY this message (never mention how many CAPs are/aren't assigned — that's internal, not something to tell the user):
+> "We understand your concern regarding the visibility of your Comprehensive Assessment Program (CAP).
+>
+> To help us investigate this further, kindly share the following details:
+> - CAP Name
+> - CAP Link"
+
+---
+
+### STEP 3 — No CAP Assigned → Share Assigning-Authority Contact
+
+**[TOOL CALL]**
+```
+get_mdo_details(email = <user_email>)
+```
+If not available:
+```
+get_yp_am_details(ministry_or_state = <user_profile.ministry_or_state>)
+```
+Same masked-placeholder-token handling as SOP-1.
+
+**If either contact found.** Resolved. Close. Use EXACTLY this message:
+> "Upon checking, we found that no Comprehensive Assessment Program (CAP) is currently assigned to your profile.
+>
+> CAP creation and assignment are managed by the concerned department.
+>
+> Kindly connect with the below contact for further assistance regarding CAP creation and assignment:
+> **Name:** [MDO Admin Name from `get_mdo_details` if it found one; otherwise the YP/AM Name from `get_yp_am_details`]
+> **Email ID:** [MDO Admin Email from `get_mdo_details` if it found one; otherwise the YP/AM Email from `get_yp_am_details`]"
+
+**If neither contact is found**, escalate natively (set `escalate=true`). Tell the user their
+issue has been logged and escalated to the support team, and a specialist will assist them
+shortly.
+
+---
+
+## Comprehensive Assessment Unable to Enroll / Eligibility-Related Issues / Incorrect CAP Assigned
+
+Same STEP 1 / STEP 1A logic as "Comprehensive Assessment Not Visible" above (profile
+verification, background AIS-field check, named-wrong-field routing) — reused as-is, not
+duplicated here.
+
+### Verify CAP Assignment
+
+**[TOOL CALL]**
+```
+get_user_cap_assignment(email = <user_email>)
+```
+
+Same case-insensitive/partial `cap_name` matching as above.
+
+**Named CAP IS found in assignments.** Resolved. Close. Use EXACTLY this message:
+> "Upon checking, we found that the following Comprehensive Assessment Program (CAP) is assigned to your profile:
+>
+> CAP Name: [cap_name]
+> CAP Link: [link_html]
+>
+> Kindly use the above link to access your Comprehensive Assessment Program."
+
+**Named CAP is NOT found in assignments** (the CAP they're asking about is not actually
+theirs):
+
+**[TOOL CALL]**
+```
+get_mdo_details(email = <user_email>)
+```
+If not available:
+```
+get_yp_am_details(ministry_or_state = <user_profile.ministry_or_state>)
+```
+
+**If either contact found.** Resolved. Close. Use EXACTLY this message:
+> "CAP assignment is managed by the concerned department.
+>
+> If you believe that an incorrect Comprehensive Assessment Program (CAP) has been assigned to your profile, kindly connect with your department MDO for further verification and necessary changes.
+>
+> **Name:** [MDO Admin Name from `get_mdo_details` if it found one; otherwise the YP/AM Name from `get_yp_am_details`]
+> **Email ID:** [MDO Admin Email from `get_mdo_details` if it found one; otherwise the YP/AM Email from `get_yp_am_details`]"
+
+**If neither contact is found**, escalate natively (set `escalate=true`). Same escalation
+message as above.
+
+**No specific CAP named:**
+- `total_count = 0` → No CAP Assigned (below)
+- `total_count >= 1` → do not assume this is the CAP they meant. Set `needs_clarification=true`. Use EXACTLY this message:
+> "We understand your concern regarding enrolling in your Comprehensive Assessment Program (CAP).
+>
+> To help us investigate this further, kindly share the following details:
+> - CAP Name
+> - CAP Link"
+
+### No CAP Assigned → Share Assigning-Authority Contact
+
+**[TOOL CALL]**
+```
+get_mdo_details(email = <user_email>)
+```
+If not available:
+```
+get_yp_am_details(ministry_or_state = <user_profile.ministry_or_state>)
+```
+
+**If either contact found.** Resolved. Close. Use EXACTLY this message:
+> "Upon checking, we found that no Comprehensive Assessment Program (CAP) is currently assigned to your profile.
+>
+> Comprehensive Assessment Programs (CAPs) are created and assigned by the concerned department.
+>
+> Kindly connect with the below contact for further assistance regarding CAP creation or assignment:
+> **Name:** [MDO Admin Name from `get_mdo_details` if it found one; otherwise the YP/AM Name from `get_yp_am_details`]
+> **Email ID:** [MDO Admin Email from `get_mdo_details` if it found one; otherwise the YP/AM Email from `get_yp_am_details`]"
+
+**If neither contact is found**, escalate natively (set `escalate=true`). Tell the user their
+issue has been logged and escalated to the support team, and a specialist will assist them
+shortly.
+
+---
+
+## SOP-2 Outcome Rules — Quick Reference
+
+| Scenario | Escalate? |
+|----------|:-------------:|
+| Named CAP found — name/link shared | ❌ |
+| No CAP named, CAPs assigned — clarification requested | ❌ (stays open) |
+| No CAP assigned, contact (MDO or YP) found | ❌ |
+| No CAP assigned, neither MDO nor YP found | ✅ |
+| Named CAP not found, contact (MDO or YP) found | ❌ |
+| Named CAP not found, neither MDO nor YP found | ✅ |
+| AIS fields partially complete — guided to update | ❌ |
