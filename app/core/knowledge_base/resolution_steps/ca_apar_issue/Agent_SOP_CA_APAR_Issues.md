@@ -16,9 +16,12 @@
 |------|-----------|---------|
 | `get_user_profile` | `(email)` | Fetch organization, profile verification status, designation, group, ministry/state |
 | `get_user_cbp_plan` | `(email)` | Fetch the user's CBP (training) plan — list of assigned courses with `isApar`, `endDate` |
-| `get_user_enrollments` | `(email, status_filter=None, content_id=None)` | Fetch enrollment/progress status for the user's assigned courses. Pass `content_id` to check one specific course across the full enrollment history (bypasses the top-20-most-recent cap used when no `content_id` is given) — returns just `course_name` and `completed: true/false` for that course |
+| `get_assigned_cap_courses` | `(email)` | Fetch the CAP(s) assigned to a user via the admin "assigned courses" API, filtered to `courseCategory: "Comprehensive Assessment Program"` — returns `plan_id` (CAP DO_ID), `course_name`, `end_date` per CAP |
+| `get_user_enrollments` | `(email, status_filter=None, content_id=None)` | Fetch enrollment/progress status for the user's assigned courses. Pass `content_id` to check one specific course across the full enrollment history (bypasses the top-20-most-recent cap used when no `content_id` is given) — returns `course_name`, `completed: true/false`, and `certificate_issued: true/false` for that course |
+| `get_cap_hierarchy` | `(cap_id)` | Fetch a CAP's child courses (`identifier`, `name`) via `GET /api/private/content/v3/hierarchy/{cap_id}` |
 | `get_mdo_details` | `(email)` | Fetch MDO Admin/Leader name and email for the user's organization |
 | `get_yp_am_details` | `(ministry_or_state)` | Fetch YP/AM (SPOC) name, email, and contact details |
+| `get_assessment_attempt_count` | `(email, assessment_identifier)` | Fetch attempts made/allowed for an assessment via `GET /api/admin/assesment/retake/count`; returns `attempts_made`, `attempts_allowed`, `remaining_attempts`, `limit_exceeded` |
 
 ---
 ---
@@ -338,3 +341,264 @@ shortly.
 | Profile not verified — guided to verify | ❌ |
 | Edge Case 1/2 — contact found | ❌ |
 | Edge Case 1/2 — neither MDO nor YP found | ✅ |
+
+---
+---
+
+# SOP-3: Final Assessment Locked in Comprehensive Assessment Program (CAP)
+
+> SOP-2 is reserved for a different, not-yet-defined topic and is intentionally skipped here.
+
+## Purpose
+Handle cases where a user reports that the Final Assessment of a Comprehensive Assessment
+Program (CAP) is locked or inaccessible.
+
+**Not implemented in this pass** (pending confirmation of the real mechanism to use):
+- Sharing the CAP name as a clickable hyperlink — no tool in this codebase returns a
+  content link, and doing so would contradict the "never fabricate a link" rule below.
+- Per-child-course technical-issue detection and an "Engineering Excel" ticket update —
+  no such integration exists; this branch is also unreachable in the reference chatbot
+  flow this SOP was adapted from (`flows/mode_b_cap_not_visible.yaml`), so it is skipped
+  here too rather than half-implemented.
+- A dedicated ticket-raising tool with structured fields (`issue_type`, `affected_resources`,
+  etc.). The only ticket mechanism implemented anywhere in this codebase is the graph's
+  native `escalate=true` + free-text `reason`, which is what STEP 1A and STEP 5B below use.
+
+## STEP 0 — Check Whether the CAP/Assessment Name Is Already Mentioned
+
+Before calling any tool, check the user's own ticket message for a specific CAP
+(Comprehensive Assessment Program) or course name they are facing the issue with.
+
+| Condition | Action |
+|---|---|
+| CAP/course name present in the message | → STEP 1 |
+| CAP/course name NOT present | Do **not** call `get_user_cbp_plan` or any other tool yet. Ask the user the question below and wait for their reply. Once named, → STEP 1. |
+
+**User Message (when the name is missing):**
+> "Could you please share the name of the CAP (Comprehensive Assessment Program) or course
+> whose Final Assessment you are facing this issue with?"
+
+---
+
+## STEP 1 — Fetch the User's Assigned CAP(s)
+
+**[TOOL CALL]**
+```
+get_assigned_cap_courses(email = <user_email>)
+```
+Calls the admin "assigned courses" API (`POST /api/supportportal/admin/user/v2/assignedcourses/{user_id}`,
+body `{"courseCategory": "Comprehensive Assessment Program"}`), already filtered to CAPs —
+no `isApar` inference needed. `caps` are the user's assigned CAP entries — `plan_id` is the
+CAP DO_ID, `course_name` is the CAP name.
+
+**If `found: false`.** Resolved. Close.
+> "We could not verify your profile at this time; please try again later."
+
+**Otherwise, route based on `caps`:**
+
+| Condition | Action |
+|---|---|
+| Empty | → STEP 1A |
+| Exactly 1 entry | Use it → STEP 2 |
+| Multiple entries, user names a specific CAP that matches exactly 1 (case-insensitive, partial match either direction) | Use that match → STEP 2 |
+| Multiple entries, no CAP named or no unique match | Default to `caps[0]` → STEP 2 |
+
+> No content link/URL is available from this API's response — do not fabricate one. The
+> "never invent a link" rule in Constraints still applies; CAP-link sharing remains
+> unimplemented pending a link-bearing field or endpoint.
+
+---
+
+## STEP 1A — No CAP Assigned
+
+**Outcome:** Resolved — close after sharing contact (or escalate if none found).
+
+**User Message:**
+> "Upon checking, we found that no Comprehensive Assessment Program (CAP) is currently
+> assigned to your profile.
+>
+> Kindly connect with your department for CAP assignment."
+
+**[TOOL CALL]** `get_user_profile(email = <user_email>)` (if `ministry_or_state` isn't
+already known), then:
+```
+get_mdo_details(email = <user_email>)
+```
+If not available:
+```
+get_yp_am_details(ministry_or_state = <user_profile.ministry_or_state>)
+```
+Masked-placeholder-token handling is identical to SOP-1 STEP 5.
+
+**If either contact found**, share Name/Email and close politely.
+**If neither found**, escalate natively (`escalate=true`). Tell the user their issue has been
+logged and escalated to the support team, and a specialist will assist them shortly.
+
+---
+
+## STEP 2 — Verify CAP Enrollment
+
+**[TOOL CALL]**
+```
+get_user_enrollments(email = <user_email>, content_id = <CAP DO_ID from STEP 1>)
+```
+`course_name: null` → not enrolled → STEP 2A. `course_name` present (regardless of
+`completed`) → enrolled → STEP 3.
+
+## STEP 2A — CAP Assigned But Not Enrolled
+
+**Outcome:** Resolved. Close.
+> "Upon checking, we found that the assigned Comprehensive Assessment Program (CAP)
+> '[cap_name]' is not yet enrolled.
+>
+> Kindly enroll in the assigned CAP to unlock the Final Assessment."
+
+---
+
+## STEP 3 — Fetch Child Courses
+
+**[TOOL CALL]**
+```
+get_cap_hierarchy(cap_id = <CAP DO_ID>)
+```
+`found: false` or empty `children` → Resolved. Close.
+> "We could not verify the CAP structure at this time; please try again later."
+
+Each child also carries a derived `resource_type`, classified from its
+`primary_category` and `mime_type`:
+
+| `primary_category` | `resource_type` |
+|---|---|
+| `Course Assessment` | **Assessment** — this child IS the CAP's Final Assessment, not a completion prerequisite. Exclude it from STEP 4's pending check. |
+| anything else, `mime_type = application/vnd.ekstep.html-archive` | **SCORM** |
+| anything else, any other `mime_type` | **Non-SCORM** |
+
+The tool also returns `assessment_child_id` — the identifier of the `Assessment`
+child, or `null` if none was found. Carry this forward for STEP 5B.
+
+---
+
+## STEP 4 — Validate Child Course Certificate Status
+
+For **each child with `resource_type` of `SCORM` or `Non-SCORM`** from STEP 3
+(skip the `Assessment` child, if any — it is validated separately in STEP 5B, not
+as a completion prerequisite):
+```
+get_user_enrollments(email = <user_email>, content_id = <child course identifier>)
+```
+Always pass `content_id` per child course — omitting it only checks the 20 most recently
+enrolled courses, which can misreport an older completed course as incomplete.
+
+A child course is **pending** when `course_name` is null (not enrolled), OR
+`completed: false`, OR `certificate_issued: false`.
+
+| Condition | Action |
+|---|---|
+| No child courses pending | → STEP 5 |
+| One or more pending | → STEP 4A |
+
+## STEP 4A — Pending Child Courses Found
+
+**Outcome:** Resolved. Close.
+
+Share a table of pending course names + resource type (SCORM / Non-SCORM) + status
+(Not enrolled / In progress / Certificate not yet generated), then:
+
+> "We found that the following courses are still pending completion.
+>
+> The Final Assessment will be unlocked only after all mandatory courses under the CAP are
+> completed successfully.
+>
+> **Steps to identify pending resources within a course:**
+> 1. Login to the iGOT Karmayogi portal.
+> 2. Navigate to Profile.
+> 3. Open My Learning.
+> 4. Open the In Progress section.
+> 5. Open the respective course.
+> 6. Click Resume.
+> 7. Expand every module using the "+" icon.
+> 8. Identify resources that do not have a Blue Tick.
+> 9. Complete all pending resources until every item shows a Blue Tick."
+
+---
+
+## STEP 5 — All Prerequisites Complete, Final Assessment Available
+
+Do NOT ask the user which of the three options describes their issue — combine all
+guidance into a single proactive message instead.
+
+**Outcome:** NO ticket. Resolved. Close.
+> "Upon checking, we found that all prerequisite courses have been completed successfully
+> and the Final Assessment is available.
+>
+> If you are trying to access the Final Assessment from Mobile, kindly try accessing it
+> through the web portal by following the steps below:
+> 1. Open Google Chrome.
+> 2. Search for iGOT Karmayogi.
+> 3. Open the iGOT Karmayogi portal.
+> 4. Click the three-dot menu in the browser.
+> 5. Enable Desktop Site.
+> 6. Login to your account.
+> 7. Navigate to Profile → My Learning.
+> 8. Open the respective CAP.
+> 9. Resume the Final Assessment.
+>
+> If you continue to face any other issue, kindly share the following so we can
+> investigate further:
+> - Error Message.
+> - Screenshot (if available)."
+
+## STEP 5-FOLLOWUP — User Reports a Further Issue After STEP 5
+
+Reply reports the assessment attempt limit being exceeded → STEP 5B.
+Reply describes any other error → STEP 5C.
+
+## STEP 5B — Assessment Limit Exceeded → Verify Before Ticketing
+
+**[TOOL CALL]**
+```
+get_assessment_attempt_count(email = <user_email>, assessment_identifier = <assessment_child_id from STEP 3, or the CAP DO_ID from STEP 1 if assessment_child_id was null>)
+```
+Calls `GET /api/admin/assesment/retake/count?assessmentIdentifier=...&userId=...&editMode=false`
+(8s timeout). Returns `found`, `attempts_made`, `attempts_allowed`, `remaining_attempts`
+(`attempts_allowed - attempts_made`), `limit_exceeded` (`remaining_attempts <= 0`).
+
+**`found: false`** (API error or fields missing). NO ticket. Resolved. Close.
+> "We were unable to verify your assessment attempt details at this time. Kindly try again
+> in a few minutes."
+
+**`limit_exceeded: true`.** RAISE TICKET — escalate natively (`escalate=true`) immediately,
+no confirmation step.
+> "We have verified that the assessment attempt limit has been exceeded. A support ticket
+> has been raised and shared with the concerned team for further investigation."
+
+**`limit_exceeded: false`.** NO ticket. Resolved. Close. Fill in `[remaining_attempts]`:
+> "Upon verification, you still have `[remaining_attempts]` attempt(s) remaining. Kindly
+> retry the assessment."
+
+## STEP 5C — Any Other Error
+
+**Outcome:** RAISE TICKET — escalate natively (`escalate=true`), using the user's own
+description of the error already in their message as the reason, plus a screenshot if
+they've shared or offered one.
+> "We have captured the reported issue and raised a support ticket for further
+> investigation."
+
+Close the conversation politely.
+
+---
+
+## SOP-3 Outcome Rules — Quick Reference
+
+| Scenario | Escalate? |
+|----------|:-------------:|
+| CAP/course name not yet mentioned (STEP 0 clarifying question) | ❌ |
+| No CAP assigned, contact (MDO or YP) found | ❌ |
+| No CAP assigned, neither MDO nor YP found | ✅ |
+| CAP not enrolled | ❌ |
+| Pending child courses | ❌ |
+| All child courses complete and certified | ❌ |
+| Attempt-count check failed (API error) | ❌ |
+| Assessment limit actually exceeded (verified) | ✅ |
+| Assessment attempts still remaining (verified) | ❌ |
+| Any other reported error at the Final Assessment | ✅ |
