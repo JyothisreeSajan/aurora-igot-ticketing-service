@@ -81,6 +81,10 @@ class TokenTracker:
                 ssl_show_warn=False,
                 request_timeout=15,
             )
+            logger.info("++++++++++++++++++")
+             ping_msg = self.client.ping()
+            logger.info(ping_msg)
+            logger.info(self.client.ping())
             if self.client.ping():
                 self._ensure_index()
                 logger.info(f"[token_tracker] Connected. Using index='{INDEX_NAME}'")
