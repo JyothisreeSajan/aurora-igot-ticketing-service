@@ -18,6 +18,7 @@ from app.core.graph.subgraphs.login_and_registration_subgraph import LoginAndReg
 # ── 1. Main Graph Flow Tests (arun_ticket) ───────────────────────────────────
 
 @pytest.mark.anyio
+@patch("app.core.graph.nodes.intake_node.ENABLED_CATEGORIES", ["*"])
 @patch("app.core.graph.nodes.intake_node._llm")
 @patch("app.core.graph.subgraphs.base_subgraph._llm")
 @patch("app.core.graph.subgraphs.base_subgraph._llm_execute")

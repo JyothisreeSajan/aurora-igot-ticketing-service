@@ -12,6 +12,8 @@ Functions called directly by graph nodes:
 import asyncio
 import logging
 
+from app.core.utils.constants import ENABLE_ZOHO_TICKET_UPDATE
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,6 +33,13 @@ def update_zoho_ticket_direct(
 
     Called directly by graph nodes (intake_node, ticket_tools).
     """
+    if not ENABLE_ZOHO_TICKET_UPDATE:
+        logger.info(
+            f"[zoho_tools] Zoho ticket update disabled by ENABLE_ZOHO_TICKET_UPDATE feature flag. "
+            f"Skipping draft reply for ticket {ticket_id}."
+        )
+        return ""
+
     from app.services.zoho_service import (
         ZohoAPIError,
         create_draft_reply,

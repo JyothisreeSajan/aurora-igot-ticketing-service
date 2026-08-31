@@ -88,10 +88,11 @@ def notify_user(state: TicketState) -> TicketState:
         f"(ticket {ticket_id}, source {source}): {response[:100]}..."
     )
 
-    # Update the Zoho ticket with the final resolution before completing the flow
-    update_zoho_ticket_direct(ticket_id, response, "Resolved")
+    # Update the Zoho ticket with the final resolution before completing the flow (if category is enabled)
+    if not state.get("is_category_disabled"):
+        update_zoho_ticket_direct(ticket_id, response, "Resolved")
 
-    log_ticket_outcome(state, outcome="resolved")
+    log_ticket_outcome(state, outcome="resolved" if not state.get("is_category_disabled") else "category_disabled")
     return state
 
 
