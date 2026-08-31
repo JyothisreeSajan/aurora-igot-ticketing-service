@@ -10,9 +10,20 @@ Covers SOP workflows from Agent_SOP_CA_APAR_Issues.md:
          get_user_profile      → STEP 3, 5A-2, 7A
          get_mdo_details       → STEP 5A-1
          get_yp_am_details     → STEP 5A-1
+
+  SOP-3  get_assigned_cap_courses   → STEP 1
+         get_user_enrollments       → STEP 2, 4 (per child course)
+         get_cap_hierarchy          → STEP 3 (also classifies each child's
+                                      resource_type — Assessment / SCORM /
+                                      Non-SCORM — consumed by STEP 4 and STEP 5B)
+         get_user_profile           → STEP 1A
+         get_mdo_details            → STEP 1A
+         get_yp_am_details          → STEP 1A
+         get_assessment_attempt_count → STEP 5B (assessment limit exceeded)
 """
 
 import json
+import logging
 
 import requests
 from langchain.tools import tool
@@ -20,6 +31,8 @@ from langchain.tools import tool
 from app.core.tools.login_issue_tool import get_mdo_details, get_yp_am_details
 from app.core.tools.profile_update_tool import get_user_profile
 from app.core.utils.config import IGOT_API_HOST_URL, IGOT_KEY
+
+logger = logging.getLogger(__name__)
 
 ENROLLMENT_FIELDS = [
     "enrolledDate",
@@ -82,18 +95,23 @@ def get_user_enrollments(email: str, status_filter: str | None = None, content_i
 
         if content_id:
             match = next((c for c in courses if c.get("contentId") == content_id), None)
-            # Deliberately minimal — only what SOP-1 Edge Case 1 branches on: whether
-            # this specific course is completed or not. A course with no enrollment
+            # Deliberately minimal — only what SOP-1 Edge Case 1 and SOP-3 STEP 2/4
+            # branch on: whether this specific course is completed, and whether its
+            # certificate has actually been issued (a course can be 100% complete
+            # with certificateIssued still null/empty). A course with no enrollment
             # record at all and a course that's in-progress both count as "not
             # completed" — the SOP guides the user to the same plan view either way,
             # it does not describe them differently. Extra fields (completionPercentage,
-            # certificates, enrolledDate, etc.) invite the response to describe details
-            # the SOP never asked for.
+            # enrolledDate, etc.) invite the response to describe details the SOP
+            # never asked for.
             return json.dumps({
                 "email": "{{USER_EMAIL}}",
                 "content_id": content_id,
                 "course_name": match.get("courseName") if match else None,
                 "completed": bool(match and match.get("status") == 2),
+                "certificate_issued": bool(
+                    match and match.get("status") == 2 and match.get("issuedCertificates")
+                ),
                 "_spoc_replacements": {"{{USER_EMAIL}}": email},
             }, indent=2)
 
@@ -201,12 +219,244 @@ def get_user_cbp_plan(email: str) -> str:
         })
 
 
+@tool
+def get_assigned_cap_courses(email: str) -> str:
+    """Fetch the Comprehensive Assessment Program (CAP) course(s) assigned to a user.
+
+    Used in SOP-3 STEP 1 to verify CAP assignment. Unlike get_user_cbp_plan (which
+    returns the user's full CBP plan and relies on an isApar flag), this calls the
+    admin "assigned courses" API filtered specifically to the CAP category, so it
+    only ever returns actual CAPs.
+
+    Args:
+        email: The user's email address.
+    """
+    search_url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
+    headers = {
+        "Authorization": f"Bearer {IGOT_KEY}",
+        "Content-Type": "application/json",
+    }
+    try:
+        profile_payload = {"request": {"filters": {"email": email}}}
+        profile_resp = requests.post(search_url, json=profile_payload, headers=headers, timeout=10)
+        profile_resp.raise_for_status()
+        profile_content = profile_resp.json().get("result", {}).get("response", {}).get("content", [])
+        if not profile_content:
+            logger.warning("[get_assigned_cap_courses] No iGOT profile found for this email.")
+            return json.dumps({
+                "email": "{{USER_EMAIL}}",
+                "found": False,
+                "message": "User profile not found.",
+                "_spoc_replacements": {"{{USER_EMAIL}}": email},
+            })
+
+        user_id = profile_content[0].get("id")
+        if not user_id:
+            logger.warning("[get_assigned_cap_courses] Profile found but missing id field.")
+            return json.dumps({
+                "email": "{{USER_EMAIL}}",
+                "found": False,
+                "message": "User id not available in profile.",
+                "_spoc_replacements": {"{{USER_EMAIL}}": email},
+            })
+
+        assigned_url = f"{IGOT_API_HOST_URL}/api/supportportal/admin/user/v2/assignedcourses/{user_id}"
+        assigned_headers = {**headers, "x-authenticated-user-token": ""}
+        try:
+            assigned_resp = requests.post(
+                assigned_url,
+                headers=assigned_headers,
+                json={"courseCategory": "Comprehensive Assessment Program"},
+                timeout=15,
+            )
+            assigned_resp.raise_for_status()
+        except requests.exceptions.HTTPError as http_err:
+            logger.error(
+                "[get_assigned_cap_courses] assignedcourses API returned %s for user_id=%s: %s",
+                http_err.response.status_code if http_err.response is not None else "?",
+                user_id,
+                http_err.response.text if http_err.response is not None else http_err,
+            )
+            raise
+        raw_caps = assigned_resp.json().get("result", {}).get("content", [])
+
+        caps = [
+            {
+                "plan_id":     c.get("identifier"),
+                "course_name": c.get("name"),
+                "end_date":    c.get("endDate"),
+            }
+            for c in raw_caps
+            if c.get("identifier")
+        ]
+
+        return json.dumps({
+            "email":      "{{USER_EMAIL}}",
+            "first_name": profile_content[0].get("firstName"),
+            "found":      True,
+            "cap_count":  len(caps),
+            "caps":       caps,
+            "_spoc_replacements": {"{{USER_EMAIL}}": email},
+        }, indent=2)
+
+    except Exception as e:
+        logger.error("[get_assigned_cap_courses] Failed: %s", e)
+        return json.dumps({
+            "email": "{{USER_EMAIL}}",
+            "found": False,
+            "error": str(e),
+            "_spoc_replacements": {"{{USER_EMAIL}}": email},
+        })
+
+
+SCORM_MIME_TYPE = "application/vnd.ekstep.html-archive"
+
+
+def _classify_child_resource(primary_category: str | None, mime_type: str | None) -> str:
+    """Classify a CAP child node per SOP-3 STEP 3/4.
+
+    "Course Assessment" children are the CAP's own Final Assessment, not a
+    completion prerequisite — STEP 4 must skip them, and STEP 5B must target
+    their identifier instead of guessing the CAP's own DO_ID doubles as the
+    assessment.
+    """
+    if primary_category == "Course Assessment":
+        return "Assessment"
+    return "SCORM" if mime_type == SCORM_MIME_TYPE else "Non-SCORM"
+
+
+@tool
+def get_cap_hierarchy(cap_id: str) -> str:
+    """Fetch the child courses of a Comprehensive Assessment Program (CAP).
+
+    Used in SOP-3 STEP 3 to determine which child courses must be completed
+    (and certified) before the CAP's Final Assessment unlocks. Each child is
+    also tagged with a derived `resource_type`:
+      - "Assessment"  → this child IS the CAP's Final Assessment (primary_category
+        "Course Assessment") — STEP 4 must exclude it from the completion check,
+        and STEP 5B must use its identifier for get_assessment_attempt_count.
+      - "SCORM"       → a prerequisite course resource packaged as SCORM
+        (mime_type "application/vnd.ekstep.html-archive").
+      - "Non-SCORM"   → any other prerequisite course resource.
+
+    Args:
+        cap_id: The CAP's DO_ID (the plan_id/content_id from get_user_cbp_plan).
+    """
+    url = f"{IGOT_API_HOST_URL}/api/private/content/v3/hierarchy/{cap_id}"
+    headers = {
+        "Authorization": f"Bearer {IGOT_KEY}",
+        "Content-Type": "application/json",
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=8)
+        response.raise_for_status()
+        data = response.json()
+        content = data.get("result", {}).get("content", {}) or {}
+        raw_children = content.get("children") or []
+
+        children = [
+            {
+                "identifier": c.get("identifier"),
+                "name": c.get("name"),
+                "primary_category": c.get("primaryCategory"),
+                "mime_type": c.get("mimeType"),
+                "resource_type": _classify_child_resource(c.get("primaryCategory"), c.get("mimeType")),
+            }
+            for c in raw_children
+            if c.get("identifier")
+        ]
+        assessment_child = next((c for c in children if c["resource_type"] == "Assessment"), None)
+
+        return json.dumps({
+            "cap_id": cap_id,
+            "cap_name": content.get("name"),
+            "found": bool(children),
+            "child_count": len(children),
+            "children": children,
+            "assessment_child_id": assessment_child["identifier"] if assessment_child else None,
+        }, indent=2)
+    except Exception as e:
+        return json.dumps({
+            "cap_id": cap_id,
+            "found": False,
+            "children": [],
+            "assessment_child_id": None,
+            "error": f"Error fetching CAP hierarchy: {e!s}",
+        })
+
+
+@tool
+def get_assessment_attempt_count(email: str, assessment_identifier: str) -> str:
+    """Fetch the number of attempts made and allowed for a specific assessment item.
+
+    Used in SOP-3 STEP 5B to determine whether the CAP Final Assessment's attempt
+    limit has actually been exceeded, or how many attempts the user has left.
+
+    Args:
+        email: The user's email address (resolved internally to the platform user id).
+        assessment_identifier: The assessment's DO_ID. Use `assessment_child_id`
+            from get_cap_hierarchy (STEP 3) when it is present — that is the CAP's
+            actual "Course Assessment" child. Fall back to the CAP's own DO_ID
+            (the plan_id/content_id from STEP 1) only when get_cap_hierarchy found
+            no such child, e.g. an older/flat CAP structure.
+    """
+    search_url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
+    headers = {
+        "Authorization": f"Bearer {IGOT_KEY}",
+        "Content-Type": "application/json",
+    }
+    try:
+        profile_payload = {"request": {"filters": {"email": email}}}
+        profile_resp = requests.post(search_url, json=profile_payload, headers=headers, timeout=10)
+        profile_resp.raise_for_status()
+        profile_content = profile_resp.json().get("result", {}).get("response", {}).get("content", [])
+        if not profile_content:
+            return json.dumps({"found": False, "error": "User not found."})
+        user_id = profile_content[0].get("id")
+        if not user_id:
+            return json.dumps({"found": False, "error": "User found but user_id is empty."})
+
+        retake_url = f"{IGOT_API_HOST_URL}/api/admin/assesment/retake/count"
+        retake_headers = {"Authorization": f"Bearer {IGOT_KEY}"}
+        params = {
+            "assessmentIdentifier": assessment_identifier,
+            "userId": user_id,
+            "editMode": "false",
+        }
+        retake_resp = requests.get(retake_url, headers=retake_headers, params=params, timeout=8)
+        retake_resp.raise_for_status()
+        result = retake_resp.json().get("result", {}) or {}
+
+        attempts_made    = result.get("attemptsMade")
+        attempts_allowed = result.get("attemptsAllowed")
+
+        if attempts_made is None or attempts_allowed is None:
+            return json.dumps({
+                "found": False,
+                "error": "Attempt count fields missing from API response.",
+            })
+
+        remaining = attempts_allowed - attempts_made
+        return json.dumps({
+            "found":              True,
+            "attempts_made":      attempts_made,
+            "attempts_allowed":   attempts_allowed,
+            "remaining_attempts": remaining,
+            "limit_exceeded":     remaining <= 0,
+        })
+    except Exception as e:
+        return json.dumps({"found": False, "error": f"Error fetching assessment attempt count: {e!s}"})
+
+
 def get_ca_apar_tools() -> list:
     """Return all tools for the CaAparSubgraph."""
     return [
         get_user_cbp_plan,
+        get_assigned_cap_courses,
         get_user_enrollments,
         get_user_profile,
         get_mdo_details,
         get_yp_am_details,
+        get_cap_hierarchy,
+        get_assessment_attempt_count,
     ]
