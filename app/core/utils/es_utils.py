@@ -34,11 +34,10 @@ logger = logging.getLogger(__name__)
 class ESManager:
     def __init__(self):
         self.client = None
-        self._setup_client()
-        
-        # Define prefixed index names
+        # Define prefixed index names BEFORE _setup_client so _ensure_indices can use them
         self.bot_index = f"{AURORA_APPLICATION_NAME}_{AURORA_APPLICATION_ENVIRONMENT}_{ELASTICSEARCH_BOT_INTERACTION_INDEX}"
         self.logs_index = f"{AURORA_APPLICATION_NAME}_{AURORA_APPLICATION_ENVIRONMENT}_{ELASTICSEARCH_LOGS_INDEX}"
+        self._setup_client()
 
     def _setup_client(self):
         if not ELASTICSEARCH_HOST:
@@ -53,6 +52,7 @@ class ESManager:
             if client_no_auth.ping():
                 self.client = client_no_auth
                 logger.info(f"Successfully connected to ElasticSearch (no auth) at {ELASTICSEARCH_HOST}")
+                self._ensure_indices()
                 return
         except Exception as e:
             logger.debug(f"ElasticSearch no-auth connection attempt failed: {e}")
@@ -65,12 +65,86 @@ class ESManager:
                 if client_auth.ping():
                     self.client = client_auth
                     logger.info(f"Successfully connected to ElasticSearch (with basic auth) at {ELASTICSEARCH_HOST}")
+                    self._ensure_indices()
                     return
             except Exception as e:
                 logger.debug(f"ElasticSearch auth connection attempt failed: {e}")
 
         logger.error("ElasticSearch ping failed (both no-auth and auth attempts).")
         self.client = None
+
+    def _ensure_indices(self):
+        """Pre-create all ESManager-owned indices with explicit mappings if they don't exist yet."""
+        # Common keyword+date mapping helper
+        def _kw(): return {"type": "keyword"}
+        def _txt(): return {"type": "text"}
+        def _date(): return {"type": "date"}
+        def _obj(): return {"type": "object", "enabled": False}  # freeform JSON blob
+
+        indices_to_create = {
+            self.bot_index: {
+                "mappings": {
+                    "_doc": {
+                        "properties": {
+                            "timestamp":        _date(),
+                            "user_id":          _kw(),
+                            "interface":        _kw(),
+                            "query":            _txt(),
+                            "response":         _txt(),
+                            "metadata":         _obj(),
+                            "application_name": _kw(),
+                            "environment":      _kw(),
+                        }
+                    }
+                }
+            },
+            self.logs_index: {
+                "mappings": {
+                    "_doc": {
+                        "properties": {
+                            "timestamp":        _date(),
+                            "level":            _kw(),
+                            "message":          _txt(),
+                            "extra":            _obj(),
+                            "application_name": _kw(),
+                            "environment":      _kw(),
+                        }
+                    }
+                }
+            },
+            f"{AURORA_APPLICATION_NAME}_{AURORA_APPLICATION_ENVIRONMENT}_escalate_data": {
+                "mappings": {
+                    "_doc": {
+                        "properties": {
+                            "timestamp":        _date(),
+                            "interactions":     {"type": "nested", "dynamic": True},
+                            "tags":             _kw(),
+                            "metadata":         _obj(),
+                            "application_name": _kw(),
+                            "environment":      _kw(),
+                        }
+                    }
+                }
+            },
+        }
+
+        for index_name, body in indices_to_create.items():
+            try:
+                if not self.client.indices.exists(index=index_name):
+                    self.client.indices.create(index=index_name, body=body)
+                    logger.info(f"[es_utils] Created index '{index_name}'")
+                else:
+                    logger.debug(f"[es_utils] Index '{index_name}' already exists")
+            except Exception as e:
+                logger.warning(f"[es_utils] Could not create index '{index_name}': {e}")
+
+        # Also ensure ticket_store's index is created. Deferred import to avoid circular dependency
+        # (es_utils is imported before ticket_store in the module chain).
+        try:
+            from app.core.graph.ticket_store import ticket_store as _ts
+            _ts._ensure_index()
+        except Exception as e:
+            logger.debug(f"[es_utils] ticket_store._ensure_index deferred call: {e}")
 
     def log_interaction(self, user_id: str, interface: str, query: str, response: str, metadata: dict = None):
         """

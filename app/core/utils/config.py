@@ -40,6 +40,7 @@ class Settings(BaseSettings):
     ZOHO_ORG_ID: str | None = None
     ZOHO_ACCOUNTS_URL: str = "https://accounts.zoho.in"
     ZOHO_DESK_URL: str = "https://desk.zoho.in"
+    ZOHO_FROM_ADDRESS: str = "mission.karmayogi@gov.in"  # support inbox for draft replies
 
     # Kafka Settings
     KAFKA_BOOTSTRAP_SERVERS: str = "localhost:9092"
@@ -78,6 +79,7 @@ ZOHO_REFRESH_TOKEN = settings.ZOHO_REFRESH_TOKEN
 ZOHO_ORG_ID = settings.ZOHO_ORG_ID
 ZOHO_ACCOUNTS_URL = settings.ZOHO_ACCOUNTS_URL
 ZOHO_DESK_URL = settings.ZOHO_DESK_URL
+ZOHO_FROM_ADDRESS = settings.ZOHO_FROM_ADDRESS
 KAFKA_BOOTSTRAP_SERVERS = settings.KAFKA_BOOTSTRAP_SERVERS
 KAFKA_TOPIC = settings.KAFKA_TOPIC
 KAFKA_GROUP_ID = settings.KAFKA_GROUP_ID
