@@ -82,7 +82,7 @@ class TokenTracker:
                 request_timeout=15,
             )
             logger.info("++++++++++++++++++")
-             ping_msg = self.client.ping()
+            ping_msg = self.client.ping()
             logger.info(ping_msg)
             logger.info(self.client.ping())
             if self.client.ping():
