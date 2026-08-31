@@ -51,6 +51,9 @@ class ESManager:
                 basic_auth=(ELASTICSEARCH_USERNAME, ELASTICSEARCH_PASSWORD) if ELASTICSEARCH_USERNAME else None,
                 verify_certs=True # default is True
             )
+            ping_msg = self.client.ping()
+            logger.info(ping_msg)
+            logger.info(self.client.ping())
             if self.client.ping():
                 logger.info(f"Successfully connected to ElasticSearch at {ELASTICSEARCH_HOST}")
             else:
