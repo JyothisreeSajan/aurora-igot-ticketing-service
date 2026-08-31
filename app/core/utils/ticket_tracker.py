@@ -58,24 +58,35 @@ class TicketTracker:
         if not ELASTICSEARCH_HOST:
             logger.warning("[ticket_tracker] ELASTICSEARCH_HOST not set — tracking disabled.")
             return
+
+        verify = False if ELASTICSEARCH_HOST.startswith("http://") else True
+
+        # Attempt 1: Connect without authentication
         try:
-            self.client = Elasticsearch(
-                ELASTICSEARCH_HOST,
-                basic_auth=(
-                    (ELASTICSEARCH_USERNAME, ELASTICSEARCH_PASSWORD)
-                    if ELASTICSEARCH_USERNAME else None
-                ),
-                verify_certs=True,
-            )
-            if self.client.ping():
+            c_no_auth = Elasticsearch([ELASTICSEARCH_HOST], verify_certs=verify)
+            if c_no_auth.ping():
+                self.client = c_no_auth
                 self._ensure_index()
-                logger.info(f"[ticket_tracker] Connected. Using index='{INDEX_NAME}'")
-            else:
-                logger.error("[ticket_tracker] ES ping failed.")
-                self.client = None
+                logger.info(f"[ticket_tracker] Connected (no auth). Using index='{INDEX_NAME}'")
+                return
         except Exception as e:
-            logger.error(f"[ticket_tracker] ES setup error: {e}")
-            self.client = None
+            logger.debug(f"[ticket_tracker] No-auth connection failed: {e}")
+
+        # Attempt 2: Connect with Basic Auth if configured
+        if ELASTICSEARCH_USERNAME:
+            try:
+                auth = (ELASTICSEARCH_USERNAME, ELASTICSEARCH_PASSWORD)
+                c_auth = Elasticsearch([ELASTICSEARCH_HOST], http_auth=auth, verify_certs=verify)
+                if c_auth.ping():
+                    self.client = c_auth
+                    self._ensure_index()
+                    logger.info(f"[ticket_tracker] Connected (with auth). Using index='{INDEX_NAME}'")
+                    return
+            except Exception as e:
+                logger.debug(f"[ticket_tracker] Auth connection failed: {e}")
+
+        logger.error("[ticket_tracker] ES ping failed (both no-auth and auth attempts).")
+        self.client = None
 
     def _ensure_index(self):
         """Create the index with mappings if it doesn't exist."""
@@ -83,33 +94,35 @@ class TicketTracker:
             return
         mappings = {
             "mappings": {
-                "properties": {
-                    "ticket_id":        {"type": "keyword"},
-                    "email":            {"type": "keyword"},
-                    "zoho_ticket_id":   {"type": "keyword"},
-                    "current_stage":    {"type": "keyword"},
-                    "is_continuation":  {"type": "boolean"},
-                    "category":         {"type": "keyword"},
-                    "main_category":    {"type": "keyword"},
-                    "sub_category":     {"type": "keyword"},
-                    "sub_category_label":{"type": "keyword"},
-                    "subject":          {"type": "text"},
-                    "body":             {"type": "text"},
-                    "is_resolved":      {"type": "boolean"},
-                    "escalated":        {"type": "boolean"},
-                    "final_response":   {"type": "text"},
-                    "created_at":       {"type": "date"},
-                    "updated_at":       {"type": "date"},
-                    "completed_at":     {"type": "date"},
-                    "app_name":         {"type": "keyword"},
-                    "environment":      {"type": "keyword"},
-                    "stages": {
-                        "type": "nested",
-                        "properties": {
-                            "stage":      {"type": "keyword"},
-                            "timestamp":  {"type": "date"},
-                            "detail":     {"type": "text"},
-                            "extra":      {"type": "object", "dynamic": True},
+                "_doc": {
+                    "properties": {
+                        "ticket_id":        {"type": "keyword"},
+                        "email":            {"type": "keyword"},
+                        "zoho_ticket_id":   {"type": "keyword"},
+                        "current_stage":    {"type": "keyword"},
+                        "is_continuation":  {"type": "boolean"},
+                        "category":         {"type": "keyword"},
+                        "main_category":    {"type": "keyword"},
+                        "sub_category":     {"type": "keyword"},
+                        "sub_category_label":{"type": "keyword"},
+                        "subject":          {"type": "text"},
+                        "body":             {"type": "text"},
+                        "is_resolved":      {"type": "boolean"},
+                        "escalated":        {"type": "boolean"},
+                        "final_response":   {"type": "text"},
+                        "created_at":       {"type": "date"},
+                        "updated_at":       {"type": "date"},
+                        "completed_at":     {"type": "date"},
+                        "app_name":         {"type": "keyword"},
+                        "environment":      {"type": "keyword"},
+                        "stages": {
+                            "type": "nested",
+                            "properties": {
+                                "stage":      {"type": "keyword"},
+                                "timestamp":  {"type": "date"},
+                                "detail":     {"type": "text"},
+                                "extra":      {"type": "object", "dynamic": True},
+                            }
                         }
                     }
                 }
