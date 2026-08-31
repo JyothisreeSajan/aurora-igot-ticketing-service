@@ -7,13 +7,15 @@ Handles:
   - OAuth2 refresh-token flow to obtain short-lived access tokens
   - In-memory token caching with expiry check
   - Fetching full Zoho Desk ticket details (HTML body stripped to plain text)
+  - Creating draft replies (HIL workflow — nothing is sent to the customer)
 
 Custom exceptions:
   - ZohoAPIError   : base exception for all Zoho API failures
   - ZohoAuthError  : raised when token retrieval fails
 
 Environment variables required (optional — Zoho integration is optional):
-  ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN, ZOHO_ORG_ID
+  ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN, ZOHO_ORG_ID,
+  ZOHO_FROM_ADDRESS (defaults to mission.karmayogi@gov.in)
 """
 import logging
 import re
@@ -27,6 +29,7 @@ from app.core.utils.config import (
     ZOHO_CLIENT_ID,
     ZOHO_CLIENT_SECRET,
     ZOHO_DESK_URL,
+    ZOHO_FROM_ADDRESS,
     ZOHO_ORG_ID,
     ZOHO_REFRESH_TOKEN,
 )
@@ -129,6 +132,64 @@ async def get_ticket_details(ticket_id: str) -> dict:
         response = await client.get(url, headers=headers)
         response.raise_for_status()
         return response.json()
+
+
+async def create_draft_reply(ticket_id: str, content: str, to: str) -> dict:
+    """
+    Creates a DRAFT reply on a Zoho Desk ticket.
+
+    The draft sits in the ticket's Reply box inside Zoho Desk and is NOT
+    sent to the customer. The L1 support agent reviews the AI-generated
+    resolution and manually clicks Send — this is the HIL checkpoint.
+
+    Nothing changes the ticket status. No notification is sent.
+
+    Args:
+        ticket_id : Zoho internal ticket ID (long numeric string)
+        content   : HTML body of the AI-generated resolution
+        to        : customer email address (reply-to)
+
+    Returns:
+        Zoho API response dict with draft id and status='DRAFT'
+    """
+    access_token = await get_valid_access_token()
+
+    headers = {
+        "orgId":         ZOHO_ORG_ID,
+        "Authorization": f"Zoho-oauthtoken {access_token}",
+        "Content-Type":  "application/json",
+    }
+
+    body = {
+        "channel":          "EMAIL",
+        "contentType":      "html",
+        "content":          content,
+        "to":               to,
+        "fromEmailAddress": ZOHO_FROM_ADDRESS,
+        "isForward":        False,
+    }
+
+    url = f"{ZOHO_DESK_URL}/api/v1/tickets/{ticket_id}/draftReply"
+    logger.info(f"[zoho] Creating draft reply for ticket {ticket_id} -> to={to}")
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.post(url, headers=headers, json=body)
+
+    if response.status_code >= 400:
+        logger.error(
+            f"[zoho] draftReply failed for ticket {ticket_id}: "
+            f"{response.status_code} {response.text}"
+        )
+        raise ZohoAPIError(
+            f"draftReply {response.status_code}: {response.text}"
+        )
+
+    result = response.json()
+    logger.info(
+        f"[zoho] Draft created for ticket {ticket_id}: "
+        f"draft_id={result.get('id')} status={result.get('status')}"
+    )
+    return result
 
 
 def extract_email_body(html_content: str, strip_signature: bool = True, strip_disclaimer: bool = True) -> str:

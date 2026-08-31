@@ -215,7 +215,7 @@ class TicketTracker:
         import time
         for attempt in range(3):
             try:
-                self.client.update(index=INDEX_NAME, id=ticket_id, body={"script": script})
+                self.client.update(index=INDEX_NAME, doc_type="_doc", id=ticket_id, body={"script": script})
                 logger.info(f"[ticket_tracker] Stage updated: ticket_id={ticket_id} stage={stage}")
                 return True
             except NotFoundError:
@@ -256,7 +256,7 @@ class TicketTracker:
         import time
         for attempt in range(3):
             try:
-                self.client.update(index=INDEX_NAME, id=ticket_id, body={"script": script})
+                self.client.update(index=INDEX_NAME, doc_type="_doc", id=ticket_id, body={"script": script})
                 logger.debug(f"[ticket_tracker] Step logged: ticket_id={ticket_id} stage={stage}")
                 return True
             except NotFoundError:
@@ -322,7 +322,7 @@ class TicketTracker:
         import time
         for attempt in range(3):
             try:
-                self.client.update(index=INDEX_NAME, id=ticket_id, body={"script": script})
+                self.client.update(index=INDEX_NAME, doc_type="_doc", id=ticket_id, body={"script": script})
                 logger.info(f"[ticket_tracker] Completed ticket_id={ticket_id} stage={STAGE_RESOLVED}")
                 return True
             except NotFoundError:

@@ -1,34 +1,91 @@
 """
 tools/zoho_tools.py
 --------------------
-LangChain tools and plain-Python helpers for Zoho Desk integration.
+Plain-Python helpers for Zoho Desk integration.
 
-LangChain tools (bound to the LLM via bind_tools):
-  - fetch_ticket_details    : fetch full Zoho Desk ticket details by ticket_id
-  - update_zoho_ticket      : update a Zoho ticket status and resolution summary
-
-Plain-Python helpers (called directly by graph nodes):
-  - update_zoho_ticket_direct : programmatic Zoho ticket update without LLM binding
-                                 (used by intake_node on junk/unregistered early exits)
+Functions called directly by graph nodes:
+  - update_zoho_ticket_direct : creates a DRAFT reply on the Zoho ticket so
+                                the L1/HIL agent can review and send it.
+                                Nothing is sent to the customer automatically.
+                                No ticket status is changed.
 """
-import json
+import asyncio
 import logging
-
-from langchain_core.tools import tool as lc_tool
 
 logger = logging.getLogger(__name__)
 
-def update_zoho_ticket_direct(ticket_id: str, resolution_summary: str, status: str = "Resolved") -> str:
-    """Update a Zoho Desk ticket with the given resolution summary and status.
 
-    Plain Python function called directly by graph nodes (e.g. intake_node).
-    Use update_zoho_ticket (LangChain @tool) when binding to the LLM.
+def update_zoho_ticket_direct(
+    ticket_id: str,
+    resolution_summary: str,
+    status: str = "Resolved",   # kept for call-site compatibility; not used
+) -> str:
     """
-    logger.info(f"Updating Zoho ticket {ticket_id} with status '{status}': {resolution_summary}")
-    return json.dumps({
-        "ticket_id": ticket_id,
-        "status": status,
-        "resolution": resolution_summary,
-        "message": "Ticket updated successfully."
-    })
+    Creates a DRAFT reply on the Zoho Desk ticket with the AI-generated
+    resolution so the L1 support agent can review and send it manually.
 
+    - No email is sent to the customer.
+    - No ticket status is changed.
+    - The `status` param is accepted for backward compatibility but ignored;
+      only the HIL agent can close/resolve the ticket after review.
+
+    Called directly by graph nodes (intake_node, ticket_tools).
+    """
+    from app.services.zoho_service import (
+        ZohoAPIError,
+        create_draft_reply,
+        get_ticket_details,
+    )
+
+    logger.info(
+        f"[zoho_tools] Creating draft reply for ticket {ticket_id} "
+        f"(requested status='{status}' ignored — HIL workflow)"
+    )
+
+    async def _run() -> dict:
+        # Fetch the customer's email from the ticket to use as the 'to' address
+        try:
+            ticket = await get_ticket_details(ticket_id)
+            to_address = ticket.get("email") or ""
+        except Exception as e:
+            logger.warning(
+                f"[zoho_tools] Could not fetch ticket details for {ticket_id}: {e}. "
+                "Draft will be created without 'to' address."
+            )
+            to_address = ""
+
+        return await create_draft_reply(
+            ticket_id=ticket_id,
+            content=resolution_summary,
+            to=to_address,
+        )
+
+    try:
+        # Graph nodes are sync; run the async draft call in a new event loop
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            # Already inside an async context (e.g. called from an async node)
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(asyncio.run, _run())
+                result = future.result(timeout=30)
+        else:
+            result = asyncio.run(_run())
+
+        draft_id = result.get("id", "unknown")
+        logger.info(
+            f"[zoho_tools] Draft reply created: draft_id={draft_id} "
+            f"ticket={ticket_id} status={result.get('status')}"
+        )
+        return draft_id
+
+    except ZohoAPIError as e:
+        logger.error(f"[zoho_tools] Zoho API error for ticket {ticket_id}: {e}")
+        return ""
+    except Exception as e:
+        logger.error(f"[zoho_tools] Unexpected error for ticket {ticket_id}: {e}")
+        return ""

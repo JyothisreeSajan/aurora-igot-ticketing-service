@@ -75,6 +75,11 @@ def _build_messages(state: dict) -> list:
 
 class TicketStore:
 
+    def __init__(self):
+        """Pre-create the ES index at startup so it is ready before the first ticket arrives."""
+        # es_manager may still be None at module import time; _ensure_index handles that gracefully.
+        self._ensure_index()
+
     def _client(self):
         c = es_manager.client
         if not c:
@@ -85,8 +90,11 @@ class TicketStore:
 
     def _ensure_index(self):
         """Create the index with minimal mappings if it doesn't exist yet."""
+        c = es_manager.client
+        if not c:
+            logger.debug("[ticket_store] _ensure_index skipped — ES client not available yet.")
+            return
         try:
-            c = self._client()
             if not c.indices.exists(index=ES_INDEX):
                 c.indices.create(
                     index=ES_INDEX,
@@ -185,7 +193,7 @@ class TicketStore:
         }
 
         try:
-            self._client().update(index=ES_INDEX, id=ticket_id, doc=update_doc)
+            self._client().update(index=ES_INDEX, doc_type="_doc", id=ticket_id, body={"doc": update_doc})
             logger.info(f"[ticket_store] Updated ticket={ticket_id} status={update_doc['status']} "
                         f"awaiting={is_awaiting}")
         except Exception as e:
