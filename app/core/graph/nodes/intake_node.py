@@ -23,9 +23,9 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from app.core.graph.state import TicketState
-from app.core.tools.zoho_tools import update_zoho_ticket_direct
 from app.core.utils.constants import (
     DOMAIN_INVALID_HTML_BODY,
+    ENABLED_CATEGORIES,
     JUNK_CONFIDENCE_THRESHOLD,
     JUNK_HTML_BODY,
     UNREGISTERED_HTML_BODY,
@@ -109,7 +109,6 @@ def intake_node(state: TicketState) -> TicketState:
                 f"Invalid email domain '{domain}' — not in the iGOT platform whitelist.",
                 is_invalid_domain=True,
             )
-            update_zoho_ticket_direct(ticket_id, f"Invalid email domain '{domain}' — not in whitelist.", "Closed")
             return {
                 **state,
                 "is_junk":            False,
@@ -138,7 +137,6 @@ def intake_node(state: TicketState) -> TicketState:
             is_junk=True,
             junk_confidence=junk_conf,
         )
-        update_zoho_ticket_direct(ticket_id, f"Junk detected: {junk_reason}", "Closed")
         return {
             **state,
             "is_junk":            True,
@@ -164,7 +162,6 @@ def intake_node(state: TicketState) -> TicketState:
             "Unregistered user — not found on iGOT platform.",
             is_unregistered=True,
         )
-        update_zoho_ticket_direct(ticket_id, "User not registered on iGOT platform.", "Closed")
         return {
             **state,
             "is_junk":            False,
@@ -269,6 +266,45 @@ def intake_node(state: TicketState) -> TicketState:
         )
     except Exception as e:
         logger.error(f"[intake] Classification failed: {e}")
+
+    # ── 3.5. Feature Flag Validation: ENABLED_CATEGORIES ─────────────────────
+    if ENABLED_CATEGORIES and "*" not in ENABLED_CATEGORIES:
+        enabled_lower = {c.lower() for c in ENABLED_CATEGORIES}
+        if category.lower() not in enabled_lower and main_category.lower() not in enabled_lower:
+            logger.info(
+                f"[intake] Category '{category}' (main='{main_category}') is disabled "
+                f"by ENABLED_CATEGORIES flag {ENABLED_CATEGORIES}. Gracefully skipping workflow for ticket={ticket_id}"
+            )
+            step = _plan_step(
+                ticket_id,
+                "intake_node",
+                f"Category '{category}' is disabled by ENABLED_CATEGORIES feature flag. Gracefully skipping entire workflow.",
+                is_category_disabled=True,
+                category=category,
+                enabled_categories=ENABLED_CATEGORIES,
+            )
+            return {
+                **state,
+                "email":                 email,
+                "category":              category,
+                "main_category":         main_category,
+                "sub_category":          sub_category,
+                "sub_category_label":    sub_category_label,
+                "user_first_name":       user_first_name,
+                "sop_categories":        sop_categories,
+                "confidence":            confidence,
+                "is_category_disabled":  True,
+                "enriched_context":   {
+                    "classification_reason": reason,
+                    "sop_categories":        sop_categories,
+                    "current_time":          current_time,
+                    "email":                 email,
+                },
+                "is_resolved":           True,
+                "is_junk":               False,
+                "final_response":        state.get("final_response", ""),
+                "graph_plan":            list(state.get("graph_plan") or []) + [step],
+            }
 
     # ── 4. Assemble enriched context ──────────────────────────────────────────
     enriched_context = {

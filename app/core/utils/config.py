@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     # Feature Flags
     VALIDATE_EMAIL: bool = False
     RESTRICT_TO_EMAIL_CHANNEL: bool = False
+    ENABLE_ZOHO_TICKET_UPDATE: bool = True
 
 
 # Shared singleton settings instance
@@ -83,5 +84,7 @@ ZOHO_FROM_ADDRESS = settings.ZOHO_FROM_ADDRESS
 KAFKA_BOOTSTRAP_SERVERS = settings.KAFKA_BOOTSTRAP_SERVERS
 KAFKA_TOPIC = settings.KAFKA_TOPIC
 KAFKA_GROUP_ID = settings.KAFKA_GROUP_ID
+ENABLE_ZOHO_TICKET_UPDATE = settings.ENABLE_ZOHO_TICKET_UPDATE
+
 
 

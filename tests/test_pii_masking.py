@@ -69,8 +69,9 @@ def test_mask_pii_combined():
 
 # ── 2. Workflow Ingestion & Graph Nodes PII Masking Tests ─────────────────────
 
+@patch("app.core.graph.nodes.intake_node.fetch_user_info", return_value=(True, "User"))
 @patch("app.core.graph.nodes.intake_node._llm")
-def test_intake_node_pii_masking(mock_llm):
+def test_intake_node_pii_masking(mock_llm, mock_fetch_user):
     """Test that intake_node masks PII in user message before calling junk/classification LLM."""
     mock_response = MagicMock()
     mock_response.content = '{"category": "certificate", "main_category": "certificate", "sub_category": "Issue in Certificate Download", "confidence": 0.9, "reason": "Certificate issue"}'

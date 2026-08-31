@@ -13,6 +13,13 @@ from app.core.utils.config import settings
 # ── Feature Flags ──────────────────────────────────────────────────────────────
 VALIDATE_EMAIL = settings.VALIDATE_EMAIL
 RESTRICT_TO_EMAIL_CHANNEL = settings.RESTRICT_TO_EMAIL_CHANNEL
+ENABLE_ZOHO_TICKET_UPDATE = settings.ENABLE_ZOHO_TICKET_UPDATE
+
+# List of enabled ticket categories. Tickets classified under any category not in this
+# list will gracefully skip execution without executing subgraphs or updating Zoho Desk.
+ENABLED_CATEGORIES: list[str] = [
+    "ca_apar_issue",
+]
 
 # ── Email HTML Template ────────────────────────────────────────────────────────
 # Used by all graph nodes that produce a final customer-facing email response.
