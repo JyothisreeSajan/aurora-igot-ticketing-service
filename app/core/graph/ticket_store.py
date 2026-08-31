@@ -90,23 +90,27 @@ class TicketStore:
             if not c.indices.exists(index=ES_INDEX):
                 c.indices.create(
                     index=ES_INDEX,
-                    mappings={
-                        "properties": {
-                            "ticket_id":              {"type": "keyword"},
-                            "email":                  {"type": "keyword"},
-                            "status":                 {"type": "keyword"},
-                            "awaiting_clarification": {"type": "boolean"},
-                            "category":               {"type": "keyword"},
-                            "main_category":          {"type": "keyword"},
-                            "sub_category":           {"type": "keyword"},
-                            "sub_category_label":     {"type": "keyword"},
-                            "route_to":               {"type": "keyword"},
-                            "clarification_question": {"type": "text"},
-                            "partial_match":          {"type": "boolean"},
-                            "final_response":         {"type": "text"},
-                            "retry_count":            {"type": "integer"},
-                            "created_at":             {"type": "date"},
-                            "updated_at":             {"type": "date"},
+                    body={
+                        "mappings": {
+                            "_doc": {
+                                "properties": {
+                                    "ticket_id":              {"type": "keyword"},
+                                    "email":                  {"type": "keyword"},
+                                    "status":                 {"type": "keyword"},
+                                    "awaiting_clarification": {"type": "boolean"},
+                                    "category":               {"type": "keyword"},
+                                    "main_category":          {"type": "keyword"},
+                                    "sub_category":           {"type": "keyword"},
+                                    "sub_category_label":     {"type": "keyword"},
+                                    "route_to":               {"type": "keyword"},
+                                    "clarification_question": {"type": "text"},
+                                    "partial_match":          {"type": "boolean"},
+                                    "final_response":         {"type": "text"},
+                                    "retry_count":            {"type": "integer"},
+                                    "created_at":             {"type": "date"},
+                                    "updated_at":             {"type": "date"},
+                                }
+                            }
                         }
                     },
                 )

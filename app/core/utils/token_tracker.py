@@ -73,27 +73,46 @@ class TokenTracker:
         if not ELASTICSEARCH_HOST:
             logger.warning("[token_tracker] ELASTICSEARCH_HOST not set — token tracking disabled.")
             return
+
+        verify = False if ELASTICSEARCH_HOST.startswith("http://") else True
+
+        # Attempt 1: Connect without authentication
         try:
-            self.client = Elasticsearch(
-                ELASTICSEARCH_HOST,
-                basic_auth=(ELASTICSEARCH_USERNAME, ELASTICSEARCH_PASSWORD),
-                verify_certs=True,
+            c_no_auth = Elasticsearch(
+                [ELASTICSEARCH_HOST],
+                verify_certs=verify,
                 ssl_show_warn=False,
                 request_timeout=15,
             )
-            logger.info("++++++++++++++++++")
-            ping_msg = self.client.ping()
-            logger.info(ping_msg)
-            logger.info(self.client.ping())
-            if self.client.ping():
+            if c_no_auth.ping():
+                self.client = c_no_auth
                 self._ensure_index()
-                logger.info(f"[token_tracker] Connected. Using index='{INDEX_NAME}'")
-            else:
-                logger.error("[token_tracker] ES ping failed.")
-                self.client = None
+                logger.info(f"[token_tracker] Connected (no auth). Using index='{INDEX_NAME}'")
+                return
         except Exception as e:
-            logger.error(f"[token_tracker] ES setup error: {e}")
-            self.client = None
+            logger.debug(f"[token_tracker] No-auth connection failed: {e}")
+
+        # Attempt 2: Connect with Basic Auth if configured
+        if ELASTICSEARCH_USERNAME:
+            try:
+                auth = (ELASTICSEARCH_USERNAME, ELASTICSEARCH_PASSWORD)
+                c_auth = Elasticsearch(
+                    [ELASTICSEARCH_HOST],
+                    http_auth=auth,
+                    verify_certs=verify,
+                    ssl_show_warn=False,
+                    request_timeout=15,
+                )
+                if c_auth.ping():
+                    self.client = c_auth
+                    self._ensure_index()
+                    logger.info(f"[token_tracker] Connected (with auth). Using index='{INDEX_NAME}'")
+                    return
+            except Exception as e:
+                logger.debug(f"[token_tracker] Auth connection failed: {e}")
+
+        logger.error("[token_tracker] ES ping failed (both no-auth and auth attempts).")
+        self.client = None
 
     def _ensure_index(self):
         """Create the index with an explicit mapping if it doesn't exist."""
@@ -103,26 +122,28 @@ class TokenTracker:
                     index=INDEX_NAME,
                     body={
                         "mappings": {
-                            "properties": {
-                                "ticket_id":        {"type": "keyword"},
-                                "email":            {"type": "keyword"},
-                                "zoho_ticket_id":   {"type": "keyword"},
-                                "category":         {"type": "keyword"},
-                                "main_category":    {"type": "keyword"},
-                                "model_breakdown":  {"type": "object",   "enabled": True},
-                                "node_breakdown":   {"type": "object",   "enabled": True},
-                                "total_prompt_tokens":     {"type": "integer"},
-                                "total_completion_tokens": {"type": "integer"},
-                                "total_tokens":            {"type": "integer"},
-                                "llm_calls":        {"type": "integer"},
-                                "is_resolved":      {"type": "boolean"},
-                                "escalated":        {"type": "boolean"},
-                                "retry_count":      {"type": "integer"},
-                                "processing_time_s": {"type": "float"},
-                                "app_name":         {"type": "keyword"},
-                                "environment":      {"type": "keyword"},
-                                "created_at":       {"type": "date"},
-                                "completed_at":     {"type": "date"},
+                            "_doc": {
+                                "properties": {
+                                    "ticket_id":        {"type": "keyword"},
+                                    "email":            {"type": "keyword"},
+                                    "zoho_ticket_id":   {"type": "keyword"},
+                                    "category":         {"type": "keyword"},
+                                    "main_category":    {"type": "keyword"},
+                                    "model_breakdown":  {"type": "object",   "enabled": True},
+                                    "node_breakdown":   {"type": "object",   "enabled": True},
+                                    "total_prompt_tokens":     {"type": "integer"},
+                                    "total_completion_tokens": {"type": "integer"},
+                                    "total_tokens":            {"type": "integer"},
+                                    "llm_calls":        {"type": "integer"},
+                                    "is_resolved":      {"type": "boolean"},
+                                    "escalated":        {"type": "boolean"},
+                                    "retry_count":      {"type": "integer"},
+                                    "processing_time_s": {"type": "float"},
+                                    "app_name":         {"type": "keyword"},
+                                    "environment":      {"type": "keyword"},
+                                    "created_at":       {"type": "date"},
+                                    "completed_at":     {"type": "date"},
+                                }
                             }
                         }
                     },

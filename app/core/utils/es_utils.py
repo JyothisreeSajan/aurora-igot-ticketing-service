@@ -45,23 +45,32 @@ class ESManager:
             logger.warning("ELASTICSEARCH_HOST not configured. ES features disabled.")
             return
 
+        verify = False if ELASTICSEARCH_HOST.startswith("http://") else True
+
+        # Attempt 1: Connect without authentication
         try:
-            self.client = Elasticsearch(
-                ELASTICSEARCH_HOST,
-                basic_auth=(ELASTICSEARCH_USERNAME, ELASTICSEARCH_PASSWORD) if ELASTICSEARCH_USERNAME else None,
-                verify_certs=True # default is True
-            )
-            ping_msg = self.client.ping()
-            logger.info(ping_msg)
-            logger.info(self.client.ping())
-            if self.client.ping():
-                logger.info(f"Successfully connected to ElasticSearch at {ELASTICSEARCH_HOST}")
-            else:
-                logger.error("ElasticSearch ping failed.")
-                self.client = None
+            client_no_auth = Elasticsearch([ELASTICSEARCH_HOST], verify_certs=verify)
+            if client_no_auth.ping():
+                self.client = client_no_auth
+                logger.info(f"Successfully connected to ElasticSearch (no auth) at {ELASTICSEARCH_HOST}")
+                return
         except Exception as e:
-            logger.error(f"Error connecting to ElasticSearch: {e!s}")
-            self.client = None
+            logger.debug(f"ElasticSearch no-auth connection attempt failed: {e}")
+
+        # Attempt 2: Connect with Basic Auth if credentials are configured
+        if ELASTICSEARCH_USERNAME:
+            try:
+                auth = (ELASTICSEARCH_USERNAME, ELASTICSEARCH_PASSWORD)
+                client_auth = Elasticsearch([ELASTICSEARCH_HOST], http_auth=auth, verify_certs=verify)
+                if client_auth.ping():
+                    self.client = client_auth
+                    logger.info(f"Successfully connected to ElasticSearch (with basic auth) at {ELASTICSEARCH_HOST}")
+                    return
+            except Exception as e:
+                logger.debug(f"ElasticSearch auth connection attempt failed: {e}")
+
+        logger.error("ElasticSearch ping failed (both no-auth and auth attempts).")
+        self.client = None
 
     def log_interaction(self, user_id: str, interface: str, query: str, response: str, metadata: dict = None):
         """
