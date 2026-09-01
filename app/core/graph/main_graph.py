@@ -53,22 +53,16 @@ from app.core.graph.state import TicketState
 
 # ── Subgraph imports (see module docstring above for implemented vs. stub) ───
 from app.core.graph.subgraphs.ca_apar_subgraph import ca_apar_subgraph
-from app.core.graph.subgraphs.certificate_subgraph import certificate_subgraph
-from app.core.graph.subgraphs.courses_subgraph import courses_subgraph
+from app.core.graph.subgraphs.content_related_subgraph import (
+    content_related_subgraph,
+)
 from app.core.graph.subgraphs.general_query_subgraph import general_query_subgraph
-from app.core.graph.subgraphs.login_and_registration_subgraph import (
-    login_and_registration_subgraph,
+from app.core.graph.subgraphs.profile_user_management_subgraph import (
+    profile_user_management_subgraph,
 )
-from app.core.graph.subgraphs.mobile_application_subgraph import (
-    mobile_application_subgraph,
+from app.core.graph.subgraphs.recognition_engagement_subgraph import (
+    recognition_engagement_subgraph,
 )
-from app.core.graph.subgraphs.organisation_subgraph import organisation_subgraph
-from app.core.graph.subgraphs.profile_update_subgraph import profile_update_subgraph
-from app.core.graph.subgraphs.program_subgraph import program_subgraph
-from app.core.graph.subgraphs.user_service_request_subgraph import (
-    user_service_request_subgraph,
-)
-from app.core.graph.subgraphs.virtual_event_subgraph import virtual_event_subgraph
 from app.core.utils.constants import GraphStage, build_email_html, get_llm_model
 
 logger = logging.getLogger(__name__)
@@ -130,33 +124,6 @@ def after_intake(state: TicketState) -> Literal["router_node", "notify_user"]:
 
 
 # ── Subgraph wrapper nodes ────────────────────────────────────────────────────
-# Fully implemented
-
-def run_certificate_subgraph(state: TicketState) -> TicketState:
-    tid = state.get("ticket_id", "unknown")
-    logger.info(f"[main_graph] certificate_subgraph — ticket={tid}")
-    return {**state, **certificate_subgraph.invoke(state)}
-
-
-def run_courses_subgraph(state: TicketState) -> TicketState:
-    tid = state.get("ticket_id", "unknown")
-    logger.info(f"[main_graph] courses_subgraph — ticket={tid}")
-    return {**state, **courses_subgraph.invoke(state)}
-
-
-def run_login_and_registration_subgraph(state: TicketState) -> TicketState:
-    tid = state.get("ticket_id", "unknown")
-    logger.info(f"[main_graph] login_and_registration_subgraph — ticket={tid}")
-    return {**state, **login_and_registration_subgraph.invoke(state)}
-
-
-def run_profile_update_subgraph(state: TicketState) -> TicketState:
-    tid = state.get("ticket_id", "unknown")
-    logger.info(f"[main_graph] profile_update_subgraph — ticket={tid}")
-    return {**state, **profile_update_subgraph.invoke(state)}
-
-
-# Stubs — escalate to support ticket until SOP is implemented
 
 def run_ca_apar_subgraph(state: TicketState) -> TicketState:
     tid = state.get("ticket_id", "unknown")
@@ -164,40 +131,28 @@ def run_ca_apar_subgraph(state: TicketState) -> TicketState:
     return {**state, **ca_apar_subgraph.invoke(state)}
 
 
-def run_organisation_subgraph(state: TicketState) -> TicketState:
+def run_profile_user_management_subgraph(state: TicketState) -> TicketState:
     tid = state.get("ticket_id", "unknown")
-    logger.info(f"[main_graph] organisation_subgraph (stub) — ticket={tid}")
-    return {**state, **organisation_subgraph.invoke(state)}
+    logger.info(f"[main_graph] profile_user_management_subgraph (stub) — ticket={tid}")
+    return {**state, **profile_user_management_subgraph.invoke(state)}
 
 
-def run_user_service_request_subgraph(state: TicketState) -> TicketState:
+def run_content_related_subgraph(state: TicketState) -> TicketState:
     tid = state.get("ticket_id", "unknown")
-    logger.info(f"[main_graph] user_service_request_subgraph (stub) — ticket={tid}")
-    return {**state, **user_service_request_subgraph.invoke(state)}
+    logger.info(f"[main_graph] content_related_subgraph (stub) — ticket={tid}")
+    return {**state, **content_related_subgraph.invoke(state)}
+
+
+def run_recognition_engagement_subgraph(state: TicketState) -> TicketState:
+    tid = state.get("ticket_id", "unknown")
+    logger.info(f"[main_graph] recognition_engagement_subgraph (stub) — ticket={tid}")
+    return {**state, **recognition_engagement_subgraph.invoke(state)}
 
 
 def run_general_query_subgraph(state: TicketState) -> TicketState:
     tid = state.get("ticket_id", "unknown")
     logger.info(f"[main_graph] general_query_subgraph (stub) — ticket={tid}")
     return {**state, **general_query_subgraph.invoke(state)}
-
-
-def run_mobile_application_subgraph(state: TicketState) -> TicketState:
-    tid = state.get("ticket_id", "unknown")
-    logger.info(f"[main_graph] mobile_application_subgraph (stub) — ticket={tid}")
-    return {**state, **mobile_application_subgraph.invoke(state)}
-
-
-def run_virtual_event_subgraph(state: TicketState) -> TicketState:
-    tid = state.get("ticket_id", "unknown")
-    logger.info(f"[main_graph] virtual_event_subgraph (stub) — ticket={tid}")
-    return {**state, **virtual_event_subgraph.invoke(state)}
-
-
-def run_program_subgraph(state: TicketState) -> TicketState:
-    tid = state.get("ticket_id", "unknown")
-    logger.info(f"[main_graph] program_subgraph (stub) — ticket={tid}")
-    return {**state, **program_subgraph.invoke(state)}
 
 
 # ── Utility nodes ─────────────────────────────────────────────────────────────
@@ -345,19 +300,13 @@ def _build_graph() -> "CompiledGraph":
 
     g.add_node("intake_node",                       intake_node)
     g.add_node("router_node",                       router_node)
-    # Fully implemented subgraphs
-    g.add_node("certificate_subgraph",              run_certificate_subgraph)
-    g.add_node("courses_subgraph",                  run_courses_subgraph)
-    g.add_node("login_and_registration_subgraph",   run_login_and_registration_subgraph)
-    g.add_node("profile_update_subgraph",           run_profile_update_subgraph)
+    # Fully implemented subgraph
     g.add_node("ca_apar_subgraph",                  run_ca_apar_subgraph)
     # Stub subgraphs
-    g.add_node("organisation_subgraph",             run_organisation_subgraph)
-    g.add_node("user_service_request_subgraph",     run_user_service_request_subgraph)
+    g.add_node("profile_user_management_subgraph", run_profile_user_management_subgraph)
+    g.add_node("content_related_subgraph",          run_content_related_subgraph)
+    g.add_node("recognition_engagement_subgraph",   run_recognition_engagement_subgraph)
     g.add_node("general_query_subgraph",            run_general_query_subgraph)
-    g.add_node("mobile_application_subgraph",       run_mobile_application_subgraph)
-    g.add_node("virtual_event_subgraph",            run_virtual_event_subgraph)
-    g.add_node("program_subgraph",                  run_program_subgraph)
     # Utility nodes
     g.add_node("promote_draft",                     promote_draft_to_final)
     g.add_node("quality_gate",                      quality_gate_node)
@@ -380,31 +329,22 @@ def _build_graph() -> "CompiledGraph":
         route_decision,
         {
             # Fully implemented
-            "certificate_subgraph":              "certificate_subgraph",
-            "courses_subgraph":                  "courses_subgraph",
-            "login_and_registration_subgraph":   "login_and_registration_subgraph",
-            "profile_update_subgraph":           "profile_update_subgraph",
             "ca_apar_subgraph":                  "ca_apar_subgraph",
             # Stubs
-            "organisation_subgraph":             "organisation_subgraph",
-            "user_service_request_subgraph":     "user_service_request_subgraph",
+            "profile_user_management_subgraph": "profile_user_management_subgraph",
+            "content_related_subgraph":          "content_related_subgraph",
+            "recognition_engagement_subgraph":   "recognition_engagement_subgraph",
             "general_query_subgraph":            "general_query_subgraph",
-            "mobile_application_subgraph":       "mobile_application_subgraph",
-            "virtual_event_subgraph":            "virtual_event_subgraph",
-            "program_subgraph":                  "program_subgraph",
             "human_queue":                       "human_queue",
         }
     )
 
     for sub in (
         # Fully implemented
-        "certificate_subgraph", "courses_subgraph",
-        "login_and_registration_subgraph", "profile_update_subgraph",
         "ca_apar_subgraph",
         # Stubs
-        "organisation_subgraph", "user_service_request_subgraph",
-        "general_query_subgraph", "mobile_application_subgraph",
-        "virtual_event_subgraph", "program_subgraph",
+        "profile_user_management_subgraph", "content_related_subgraph",
+        "recognition_engagement_subgraph", "general_query_subgraph",
     ):
         g.add_edge(sub, "promote_draft")
 

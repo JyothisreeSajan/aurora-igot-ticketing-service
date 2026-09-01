@@ -151,33 +151,35 @@ def intake_node(state: TicketState) -> TicketState:
             "graph_plan":         list(state.get("graph_plan") or []) + [step],
         }
 
+    user_first_name = ""
     # ── 1.5. User registration check (early exit) ─────────────────────────────
-    logger.info(f"[intake] Checking user registration for ticket={ticket_id}")
-    is_registered, user_first_name = fetch_user_info(email)
-    if not is_registered:
-        logger.info(f"[intake] Unregistered user for ticket={ticket_id}")
-        step = _plan_step(
-            ticket_id,
-            "intake_node",
-            "Unregistered user — not found on iGOT platform.",
-            is_unregistered=True,
-        )
-        return {
-            **state,
-            "is_junk":            False,
-            "category":           "general",
-            "main_category":      "general",
-            "sub_category":       "",
-            "sub_category_label": "",
-            "user_first_name":    user_first_name,
-            "confidence":         1.0,
-            "final_response":     build_email_html(
-                UNREGISTERED_HTML_BODY.format(email=email),
-                name="User",
-            ),
-            "is_resolved":        True,
-            "graph_plan":         list(state.get("graph_plan") or []) + [step],
-        }
+    if VALIDATE_EMAIL:
+        logger.info(f"[intake] Checking user registration for ticket={ticket_id}")
+        is_registered, user_first_name = fetch_user_info(email)
+        if not is_registered:
+            logger.info(f"[intake] Unregistered user for ticket={ticket_id}")
+            step = _plan_step(
+                ticket_id,
+                "intake_node",
+                "Unregistered user — not found on iGOT platform.",
+                is_unregistered=True,
+            )
+            return {
+                **state,
+                "is_junk":            False,
+                "category":           "general",
+                "main_category":      "general",
+                "sub_category":       "",
+                "sub_category_label": "",
+                "user_first_name":    user_first_name,
+                "confidence":         1.0,
+                "final_response":     build_email_html(
+                    UNREGISTERED_HTML_BODY.format(email=email),
+                    name="User",
+                ),
+                "is_resolved":        True,
+                "graph_plan":         list(state.get("graph_plan") or []) + [step],
+            }
 
     # ── 2. Discover live SOP categories ───────────────────────────────────────
     sop_categories = fetch_sop_categories()
