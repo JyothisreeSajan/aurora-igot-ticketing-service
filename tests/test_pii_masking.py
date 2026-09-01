@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage
 
 from app.core.utils.helpers import mask_pii, mask_pii_default
 from app.core.graph.nodes.intake_node import intake_node
-from app.core.graph.subgraphs.certificate_subgraph import CertificateSubgraph
+from app.core.graph.subgraphs.ca_apar_subgraph import CaAparSubgraph
 
 
 # ── 1. Unit Tests for PII Detection & Masking ──────────────────────────────────
@@ -106,7 +106,7 @@ def test_intake_node_pii_masking(mock_llm, mock_fetch_user):
 @patch("app.core.graph.subgraphs.base_subgraph._llm")
 def test_subgraph_plan_node_pii_masking(mock_llm):
     """Test that subgraph plan_node masks PII in user message before calling LLM."""
-    subgraph = CertificateSubgraph()
+    subgraph = CaAparSubgraph()
 
     mock_llm_response = MagicMock(spec=AIMessage)
     mock_llm_response.content = "Plan: 1. Verify user profile, 2. Issue certificate."
@@ -117,7 +117,7 @@ def test_subgraph_plan_node_pii_masking(mock_llm):
         "ticket_id": "t_pii_test_002",
         "email": "official@gov.in",
         "message": "My email is official.user@gov.in, PAN is ABCDE1234F, call +91-9876543210",
-        "main_category": "certificate",
+        "main_category": "ca_apar_issue",
         "retry_count": 0,
         "enriched_context": {"kb_snippets": []},
     }

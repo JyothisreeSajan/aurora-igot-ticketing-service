@@ -171,3 +171,50 @@ def test_update_zoho_ticket_direct_disabled_flag():
         mock_draft.assert_not_called()
 
 
+def test_intake_node_validate_email_true_checks_registration():
+    state = {
+        "ticket_id": "test_reg_true",
+        "email": "unregistered@gov.in",
+        "message": "APAR plan issue",
+        "is_continuation": False
+    }
+    with patch("app.core.graph.nodes.intake_node.VALIDATE_EMAIL", True), \
+         patch("app.core.graph.nodes.intake_node.is_domain_allowed", return_value=True), \
+         patch("app.core.graph.nodes.intake_node.detect_junk", return_value=(False, 0.0, "")), \
+         patch("app.core.graph.nodes.intake_node.fetch_user_info", return_value=(False, "")) as mock_fetch_user:
+        new_state = intake_node(state)
+        mock_fetch_user.assert_called_once_with("unregistered@gov.in")
+        assert new_state["is_resolved"] is True
+        assert "unable to find an account" in new_state["final_response"].lower()
+
+
+def test_intake_node_validate_email_false_skips_registration_check():
+    state = {
+        "ticket_id": "test_reg_false",
+        "email": "unregistered@gov.in",
+        "message": "APAR plan issue",
+        "is_continuation": False
+    }
+    mock_llm_response = MagicMock(spec=AIMessage)
+    mock_llm_response.content = json.dumps({
+        "category": "ca_apar_issue",
+        "main_category": "ca_apar_issue",
+        "confidence": 0.95,
+        "reason": "APAR plan issue."
+    })
+    mock_llm_response.usage_metadata = {}
+
+    with patch("app.core.graph.nodes.intake_node.VALIDATE_EMAIL", False), \
+         patch("app.core.graph.nodes.intake_node.detect_junk", return_value=(False, 0.0, "")), \
+         patch("app.core.graph.nodes.intake_node.fetch_user_info") as mock_fetch_user, \
+         patch("app.core.graph.nodes.intake_node.fetch_sop_categories", return_value=["ca_apar_issue"]), \
+         patch("app.core.graph.nodes.intake_node.ENABLED_CATEGORIES", ["*"]), \
+         patch("app.core.graph.nodes.intake_node._llm") as mock_llm:
+        mock_llm.invoke.return_value = mock_llm_response
+        new_state = intake_node(state)
+        mock_fetch_user.assert_not_called()
+        assert new_state["category"] == "ca_apar_issue"
+        assert new_state["is_resolved"] is False
+
+
+

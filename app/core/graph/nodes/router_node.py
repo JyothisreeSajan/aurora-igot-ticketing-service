@@ -53,19 +53,14 @@ MAX_QUALITY_REROUTES = 2
 # Checks are applied in order; first match wins.
 # Each key mirrors the exact snake_case category name from CATEGORY_SUBCATEGORY_MAP.
 CATEGORY_ROUTING_RULES = [
-    # ── Fully implemented subgraphs ────────────────────────────────────────────
-    (["certificate"],                                      "certificate_subgraph"),
-    (["course"],                                           "courses_subgraph"),
-    (["login_issue", "login"],                            "login_and_registration_subgraph"),
-    (["profile_update"],                                   "profile_update_subgraph"),
-    (["ca_apar_issue", "ca_apar", "apar"],               "ca_apar_subgraph"),
+    # ── Fully implemented subgraph ────────────────────────────────────────────
+    (["ca_apar_issue", "ca_apar", "apar"],                       "ca_apar_subgraph"),
+
     # ── Stub subgraphs (create support ticket until SOP is built) ──────────────
-    (["organisation_request", "organisation"],            "organisation_subgraph"),
-    (["user_service_request"],                             "user_service_request_subgraph"),
-    (["mobile_application"],                               "mobile_application_subgraph"),
-    (["virtual_event"],                                    "virtual_event_subgraph"),
-    (["program"],                                          "program_subgraph"),
-    (["general"],                                          "general_query_subgraph"),
+    (["profile_and_user_management", "profile", "user_mgmt"],    "profile_user_management_subgraph"),
+    (["content_related_issue", "content", "course", "cert"],      "content_related_subgraph"),
+    (["recognition_and_engagement", "recognition", "karma"],      "recognition_engagement_subgraph"),
+    (["general"],                                                  "general_query_subgraph"),
 ]
 DEFAULT_SUBGRAPH = "general_query_subgraph"
 

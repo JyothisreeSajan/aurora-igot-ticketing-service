@@ -10,14 +10,15 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from app.core.graph.main_graph import arun_ticket
-from app.core.graph.subgraphs.certificate_subgraph import CertificateSubgraph
-from app.core.graph.subgraphs.courses_subgraph import CoursesSubgraph
-from app.core.graph.subgraphs.login_and_registration_subgraph import LoginAndRegistrationSubgraph
+from app.core.graph.subgraphs.ca_apar_subgraph import CaAparSubgraph
+from app.core.graph.subgraphs.content_related_subgraph import ContentRelatedSubgraph
+from app.core.graph.subgraphs.profile_user_management_subgraph import ProfileUserManagementSubgraph
 
 
 # ── 1. Main Graph Flow Tests (arun_ticket) ───────────────────────────────────
 
 @pytest.mark.anyio
+@patch("app.core.graph.nodes.intake_node.VALIDATE_EMAIL", True)
 @patch("app.core.graph.nodes.intake_node.ENABLED_CATEGORIES", ["*"])
 @patch("app.core.graph.nodes.intake_node._llm")
 @patch("app.core.graph.subgraphs.base_subgraph._llm")
@@ -28,31 +29,31 @@ from app.core.graph.subgraphs.login_and_registration_subgraph import LoginAndReg
 async def test_main_graph_full_flow_success(
     mock_domain, mock_user_info, mock_quality, mock_exec, mock_sub_llm, mock_intake_llm
 ):
-    """Test full main graph flow from intake to router, certificate subgraph, quality gate, and output."""
+    """Test full main graph flow from intake to router, ca_apar subgraph, quality gate, and output."""
     mock_domain.return_value = True
     mock_user_info.return_value = (True, "Rakesh")
 
     # Intake node: classification response
     intake_resp = MagicMock()
-    intake_resp.content = '{"is_junk": false, "category": "certificate", "main_category": "certificate", "sub_category": "certificate_not_generated", "confidence": 0.95}'
+    intake_resp.content = '{"is_junk": false, "category": "ca_apar_issue", "main_category": "ca_apar_issue", "sub_category": "apar_training_plan_not_visible", "confidence": 0.95}'
     intake_resp.usage_metadata = {}
     mock_intake_llm.invoke.return_value = intake_resp
 
     # Subgraph plan node response
     plan_resp = MagicMock(spec=AIMessage)
-    plan_resp.content = "Plan: 1. Check enrollments, 2. Verify completion."
+    plan_resp.content = "Plan: 1. Check user APAR training plan."
     plan_resp.usage_metadata = {}
 
     # Subgraph decide node response
     decide_resp = MagicMock(spec=AIMessage)
-    decide_resp.content = '{"resolved": true, "needs_clarification": false, "escalate": false, "draft": "Your certificate has been re-synced and is available under My Certificates.", "reason": "SOP verified"}'
+    decide_resp.content = '{"resolved": true, "needs_clarification": false, "escalate": false, "draft": "Your APAR training plan is visible on profile.", "reason": "SOP verified"}'
     decide_resp.usage_metadata = {}
 
     mock_sub_llm.invoke.side_effect = [plan_resp, decide_resp]
 
     # Subgraph execute node (no tool calls -> stop)
     exec_tools = MagicMock()
-    exec_resp = AIMessage(content="Certificate is generated and visible under My Certificates.")
+    exec_resp = AIMessage(content="CBP plan retrieved successfully.")
     exec_resp.usage_metadata = {}
     exec_resp.tool_calls = []
     exec_tools.invoke.return_value = exec_resp
@@ -66,15 +67,15 @@ async def test_main_graph_full_flow_success(
     ticket_dict = {
         "ticket_id": "t_main_flow_001",
         "email": "rakesh@gov.in",
-        "message": "Certificate missing for course Governing with AI",
+        "message": "APAR training plan not visible on my profile",
         "channel": "email"
     }
 
     result = await arun_ticket(ticket_dict)
 
     assert result["ticket_id"] == "t_main_flow_001"
-    assert result["main_category"] == "certificate"
-    assert result["route_to"] == "certificate_subgraph"
+    assert result["main_category"] == "ca_apar_issue"
+    assert result["route_to"] == "ca_apar_subgraph"
     assert result["final_response"] is not None
     assert "Hi Rakesh," in result["final_response"]
 
@@ -102,33 +103,33 @@ async def test_main_graph_junk_early_exit(mock_detect_junk):
 # ── 2. Subgraph Execution Loop Tests (Plan -> Execute -> Decide) ─────────────
 
 @patch("app.core.graph.subgraphs.base_subgraph._llm")
-def test_certificate_subgraph_plan_node(mock_llm):
-    """Test CertificateSubgraph plan_node SOP plan generation."""
-    subgraph = CertificateSubgraph()
+def test_ca_apar_subgraph_plan_node(mock_llm):
+    """Test CaAparSubgraph plan_node SOP plan generation."""
+    subgraph = CaAparSubgraph()
 
     mock_resp = MagicMock(spec=AIMessage)
-    mock_resp.content = "Plan: Verify user course completion and issue certificate."
+    mock_resp.content = "Plan: Verify user APAR training plan."
     mock_resp.usage_metadata = {}
     mock_llm.invoke.return_value = mock_resp
 
     state = {
         "ticket_id": "t_sub_plan_001",
         "email": "official@gov.in",
-        "message": "Certificate issue for AI course",
-        "main_category": "certificate",
+        "message": "APAR issue for profile",
+        "main_category": "ca_apar_issue",
         "retry_count": 0,
         "enriched_context": {"kb_snippets": []}
     }
 
     new_state = subgraph.plan_node(state)
-    assert new_state["plan"] == "Plan: Verify user course completion and issue certificate."
+    assert new_state["plan"] == "Plan: Verify user APAR training plan."
     assert len(new_state["graph_plan"]) == 1
 
 
 @patch("app.core.graph.subgraphs.base_subgraph._llm_execute")
 def test_subgraph_execute_node_tool_invocation(mock_llm_execute):
     """Test execute_node tools execution and user email injection."""
-    subgraph = CoursesSubgraph()
+    subgraph = ContentRelatedSubgraph()
 
     mock_llm_with_tools = MagicMock()
     mock_llm_execute.bind_tools.return_value = mock_llm_with_tools
@@ -171,7 +172,7 @@ def test_subgraph_execute_node_tool_invocation(mock_llm_execute):
 @patch("app.core.graph.subgraphs.base_subgraph._llm")
 def test_subgraph_decide_node_resolution(mock_llm):
     """Test decide_node verdict resolution."""
-    subgraph = LoginAndRegistrationSubgraph()
+    subgraph = ProfileUserManagementSubgraph()
 
     mock_resp = MagicMock()
     mock_resp.content = '{"resolved": true, "needs_clarification": false, "escalate": false, "draft": "Please reset password via official portal.", "reason": "SOP followed"}'

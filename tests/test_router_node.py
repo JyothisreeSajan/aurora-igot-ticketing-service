@@ -2,17 +2,10 @@ from app.core.graph.nodes.router_node import router_node, route_decision, _resol
 
 def test_resolve_subgraph():
     # Exact category-name matches
-    assert _resolve_subgraph("certificate", []) == "certificate_subgraph"
-    assert _resolve_subgraph("course", []) == "courses_subgraph"
-    assert _resolve_subgraph("program", []) == "program_subgraph"
-    assert _resolve_subgraph("login_issue", []) == "login_and_registration_subgraph"
-    assert _resolve_subgraph("profile_update", []) == "profile_update_subgraph"
     assert _resolve_subgraph("ca_apar_issue", []) == "ca_apar_subgraph"
-    assert _resolve_subgraph("organisation_request", []) == "organisation_subgraph"
-    
-    # Catch-all general categories
-    assert _resolve_subgraph("mobile_application", []) == "mobile_application_subgraph"
-    assert _resolve_subgraph("virtual_event", []) == "virtual_event_subgraph"
+    assert _resolve_subgraph("profile_and_user_management", []) == "profile_user_management_subgraph"
+    assert _resolve_subgraph("content_related_issue", []) == "content_related_subgraph"
+    assert _resolve_subgraph("recognition_and_engagement", []) == "recognition_engagement_subgraph"
     assert _resolve_subgraph("general", []) == "general_query_subgraph"
     
     # Unmapped category fallback
@@ -23,13 +16,13 @@ def test_router_node_continuation():
     state = {
         "ticket_id": "test_123",
         "is_continuation": True,
-        "route_to": "courses_subgraph",
-        "category": "certificate",
+        "route_to": "ca_apar_subgraph",
+        "category": "ca_apar_issue",
         "confidence": 0.1,  # very low confidence, normally routes to human_queue
         "quality_reroute_count": 5  # high reroutes, normally routes to human_queue
     }
     new_state = router_node(state)
-    assert new_state["route_to"] == "courses_subgraph"
+    assert new_state["route_to"] == "ca_apar_subgraph"
     assert new_state["is_continuation"] is True
     assert "graph_plan" in new_state
     assert len(new_state["graph_plan"]) == 1
@@ -39,7 +32,7 @@ def test_router_node_max_quality_reroutes():
     state = {
         "ticket_id": "test_123",
         "is_continuation": False,
-        "category": "certificate",
+        "category": "ca_apar_issue",
         "confidence": 0.9,
         "quality_reroute_count": 2
     }
@@ -53,7 +46,7 @@ def test_router_node_low_confidence():
     state = {
         "ticket_id": "test_123",
         "is_continuation": False,
-        "category": "certificate",
+        "category": "ca_apar_issue",
         "confidence": 0.74,
         "quality_reroute_count": 0
     }
@@ -67,12 +60,12 @@ def test_router_node_normal_routing():
     state = {
         "ticket_id": "test_123",
         "is_continuation": False,
-        "category": "certificate",
+        "category": "ca_apar_issue",
         "confidence": 0.8,
         "quality_reroute_count": 0
     }
     new_state = router_node(state)
-    assert new_state["route_to"] == "certificate_subgraph"
+    assert new_state["route_to"] == "ca_apar_subgraph"
     assert new_state.get("escalated_to_human", False) is False
 
 def test_route_decision():

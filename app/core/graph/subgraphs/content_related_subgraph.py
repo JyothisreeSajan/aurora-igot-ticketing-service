@@ -1,10 +1,15 @@
 """
-subgraphs/program_subgraph.py
-------------------------------
-Stub subgraph for Program-specific issues on iGOT Karmayogi.
+subgraphs/content_related_subgraph.py
+-----------------------------------------
+Stub subgraph for Content Related Issues on iGOT Karmayogi.
 
-Categories handled (from CATEGORY_SUBCATEGORY_MAP → program):
-  - Assessment Issue (program level)
+Categories handled (from CATEGORY_SUBCATEGORY_MAP → content_related_issue):
+  - Enrolment Issues
+  - Course / Program Progress Issue
+  - Content / Resource Not Opening
+  - Event Related Issue
+  - Certificate Issue
+  - Unable to submit rating/feedback
 
 STATUS: [STUB] — Full SOP implementation pending.
 Action : Creates a support ticket and routes to human specialist.
@@ -20,14 +25,14 @@ from app.core.utils.prompt_templates import STUB_SUBGRAPH_SYSTEM_PROMPT
 logger = logging.getLogger(__name__)
 
 
-class ProgramSubgraph(BaseSubgraph):
+class ContentRelatedSubgraph(BaseSubgraph):
 
-    CATEGORY = "program"
+    CATEGORY = "content_related_issue"
 
     def system_prompt(self, state: TicketState) -> str:
         return STUB_SUBGRAPH_SYSTEM_PROMPT.format(
             email=state.get("email", "unknown"),
-            main_category=state.get("main_category", "program"),
+            main_category=state.get("main_category", "content_related_issue"),
         )
 
     def get_tools(self, state: TicketState) -> list:
@@ -35,4 +40,4 @@ class ProgramSubgraph(BaseSubgraph):
 
 
 # Singleton — compiled once at import time
-program_subgraph = ProgramSubgraph().build()
+content_related_subgraph = ContentRelatedSubgraph().build()

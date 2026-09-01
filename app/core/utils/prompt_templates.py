@@ -21,6 +21,7 @@ INTAKE_CLASSIFIER_SYSTEM = "You are a JSON-only classifier for iGOT Karmayogi su
 # Keys  : snake_case SOP category names (match resolution_steps folder names)
 # Values: list of (snake_case_key, human-readable label) tuples
 CATEGORY_SUBCATEGORY_MAP: dict[str, list[tuple[str, str]]] = {
+    # ── Fully Implemented ──────────────────────────────────────────────────────
     "ca_apar_issue": [
         ("apar_training_plan_not_visible",              "APAR / Training Plan Not Visible"),
         ("apar_training_plan_unexpected_courses_visible", "APAR / Training Plan Unexpected courses visible"),
@@ -29,57 +30,30 @@ CATEGORY_SUBCATEGORY_MAP: dict[str, list[tuple[str, str]]] = {
         ("comprehensive_assessment_unable_to_enroll",    "Comprehensive Assessment Unable to enroll"),
         ("cap_final_assessment_locked",                  "Comprehensive Assessment Program (CAP) - Final Assessment Locked"),
     ],
-    "certificate": [
-        ("certificate_not_generated",    "Certificate is not generated"),
-        ("unable_to_download_certificate", "Unable to download certificate"),
+
+    # ── Stubs (New Taxonomy) ───────────────────────────────────────────────────
+    "profile_and_user_management": [
+        ("access_revoked",                        "Access Revoked"),
+        ("email_mobile_already_registered",       "Email / Mobile already registered"),
+        ("profile_verification_verified_badge",  "Profile Verification / Verified Badge"),
+        ("designation_group_not_verified",        "Designation / Group Not verified"),
+        ("profile_update",                        "Profile Update"),
     ],
-    "course": [
-        ("issue_in_completing_the_course",          "Issue in completing the course"),
-        ("course_progress_not_updating",            "Course progress is not updating"),
-        ("unable_to_enroll_start_or_resume_course", "Unable to enroll, start or resume a course"),
-        ("unable_to_search_for_course",             "Unable to search for course"),
-        ("not_invited_to_the_course",               "Not invited to the course"),
-        ("assessment_issue",                        "Assessment Issue"),
+    "content_related_issue": [
+        ("enrolment_issues",                      "Enrolment Issues"),
+        ("course_program_progress_issue",         "Course / Program Progress Issue"),
+        ("content_resource_not_opening",          "Content / Resource Not Opening"),
+        ("event_related_issue",                   "Event Related Issue"),
+        ("certificate_issue",                     "Certificate Issue"),
+        ("unable_to_submit_rating_feedback",      "Unable to submit rating/feedback"),
+    ],
+    "recognition_and_engagement": [
+        ("karma_points_issue",                    "Karma Points Issue"),
+        ("weekly_claps_issue",                    "Weekly Claps Issue"),
+        ("leader_board_issue",                    "Leader Board Issue"),
     ],
     "general": [
-        ("general_query_need_information", "General query / need information"),
-    ],
-    "login_issue": [
-        ("more_than_one_account_exists", "More than one account exists for the user"),
-    ],
-    "mobile_application": [
-        ("application_not_loading", "Application Not Loading"),
-    ],
-    "organisation_request": [
-        ("request_to_add_domain",           "Request to add domain"),
-        ("request_to_create_mdo_channel",   "Request to Create MDO Channel"),
-        ("request_to_create_ati_cti_page",  "Request to Create ATI/CTI Page"),
-        ("request_to_delete_organisation",  "Request to Delete Organisation"),
-    ],
-    "profile_update": [
-        ("weekly_claps_not_updating",       "Weekly claps are not updating"),
-        ("learning_hours_not_getting_added", "Learning hours are not getting added"),
-        ("karma_points_not_updating",       "Karma points are not updating"),
-        ("badge_not_received",              "Badge not received"),
-    ],
-    "program": [
-        ("assessment_issue", "Assessment Issue"),
-    ],
-    "user_service_request": [
-        ("request_for_account_activation_deactivation",   "Request for account activation/deactivation"),
-        ("request_to_transfer_to_another_department",     "Request to transfer to another department/organization"),
-        ("request_to_update_email_address",               "Request to update email address"),
-        ("request_to_update_mobile_number",               "Request to update mobile number"),
-        ("request_to_update_designation",                 "Request to update designation"),
-        ("request_to_update_group",                       "Request to update group"),
-        ("request_to_update_ehrms_details",               "Request to update eHRMS details"),
-        ("request_to_assign_role",                        "Request to assign role"),
-        ("request_to_add_designation",                    "Request to add designation"),
-        ("request_to_add_or_update_service_details",      "Request to add or update service details"),
-    ],
-    "virtual_event": [
-        ("unable_to_join_the_event",   "Unable to join the event"),
-        ("unable_to_search_for_event", "Unable to search for event"),
+        ("general_query_need_information",        "General query / need information"),
     ],
 }
 
