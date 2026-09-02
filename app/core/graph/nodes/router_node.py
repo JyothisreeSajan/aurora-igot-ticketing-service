@@ -12,6 +12,7 @@ specialist subgraph should handle the ticket:
   - login_and_registration_subgraph   : login, email/mobile update, multi-account
   - profile_update_subgraph           : verification, designation, leaderboard
   - ca_apar_subgraph                  : APAR/training plan not visible, unexpected courses, wrong plan assigned
+  - recognition_engagement_subgraph   : karma points, weekly claps, learning hours, leaderboard
 
   Stub (→ support ticket until SOP is built):
   - organisation_subgraph             : domain, MDO, ATI/CTI, deletion requests
@@ -55,11 +56,11 @@ MAX_QUALITY_REROUTES = 2
 CATEGORY_ROUTING_RULES = [
     # ── Fully implemented subgraph ────────────────────────────────────────────
     (["ca_apar_issue", "ca_apar", "apar"],                       "ca_apar_subgraph"),
+    (["recognition_and_engagement", "recognition", "karma"],      "recognition_engagement_subgraph"),
 
     # ── Stub subgraphs (create support ticket until SOP is built) ──────────────
     (["profile_and_user_management", "profile", "user_mgmt"],    "profile_user_management_subgraph"),
     (["content_related_issue", "content", "course", "cert"],      "content_related_subgraph"),
-    (["recognition_and_engagement", "recognition", "karma"],      "recognition_engagement_subgraph"),
     (["general"],                                                  "general_query_subgraph"),
 ]
 DEFAULT_SUBGRAPH = "general_query_subgraph"
