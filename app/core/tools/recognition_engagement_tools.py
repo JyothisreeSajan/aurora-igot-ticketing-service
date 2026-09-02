@@ -6,7 +6,10 @@ Tools used exclusively by the RecognitionEngagementSubgraph.
 Covers SOP workflows from Agent_SOP_Recognition_Engagement.md:
 
   SOP-RE1  Karma Points Issue
-           get_completed_courses    → STEP 0 (course-name fallback list)
+           get_completed_courses    → STEP 0 (course-name fallback list, ticket has no name)
+           find_completed_course    → STEP 0 (resolve a ticket-named course to a course_id,
+                                        searched against the full completed-course history —
+                                        not capped to the 5 most recent like get_completed_courses)
            get_completed_events     → STEP 0 (event-name fallback list) + live-participation timing
            get_karma_course_status  → STEP 1, STEP 2/3, Edge Case 1
            get_karma_event_status   → STEP 1 credited check
@@ -142,6 +145,114 @@ def get_completed_courses(email: str) -> str:
         }, indent=2)
     except Exception as e:
         logger.error(f"[recognition_engagement_tools] get_completed_courses error: {e}")
+        return json.dumps({"found": False, "error": str(e),
+                            "_spoc_replacements": {"{{USER_EMAIL}}": email}})
+
+
+def _is_course_completed(c: dict) -> bool:
+    """A course is completed when status == 2, or a certificate has been
+    issued for it (belt-and-suspenders — completionPercentage is not
+    reliable: some in-progress/not-started records report it as 0 even at
+    status 1)."""
+    return c.get("status") == 2 or bool(c.get("issuedCertificates"))
+
+
+@tool
+def find_completed_course(email: str, course_name: str) -> str:
+    """Resolve a ticket-named course to a course_id, searching the user's FULL
+    enrollment history — completed or not (unlike get_completed_courses, not
+    capped to the 5 most recent, and not limited to completed courses).
+
+    Used in SOP-RE1 Flow A STEP 0 whenever the ticket message already names a
+    course — call this instead of get_completed_courses in that case.
+
+    Matches case-insensitively, partial match in either direction (the ticket's
+    course name as a substring of the platform course name, or vice versa).
+
+    Returns:
+      match — one of:
+        "single"             — exactly one completed match (status == 2 or a
+                                certificate issued). course_id, course_name,
+                                completed_on are populated.
+        "multiple"           — more than one completed match. `candidates` is
+                                a list of {course_id, course_name,
+                                completed_on} — ask the user to confirm which
+                                one before proceeding.
+        "enrolled_incomplete" — the name matches a course the user is
+                                enrolled in (status 0 or 1) but has NOT
+                                completed. No completed match exists.
+                                `candidates` is a list of {course_id,
+                                course_name}. Karma completion points are only
+                                credited once the course is finished — tell
+                                the user to complete it; do not treat this as
+                                a credit-status bug.
+        "none"                — no enrollment at all (completed or in
+                                progress) matches this name.
+    """
+    try:
+        user_id = _resolve_user_id(email)
+        if not user_id:
+            return json.dumps({"found": False, "message": "User profile not found.",
+                                "_spoc_replacements": {"{{USER_EMAIL}}": email}})
+
+        url = f"{IGOT_API_HOST_URL}/api/course/private/v4/user/enrollment/list/{user_id}"
+        headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": "application/json"}
+        payload = {"request": {"retiredCoursesEnabled": True}}
+        resp = requests.post(url, headers=headers, json=payload, timeout=10)
+        resp.raise_for_status()
+        courses = resp.json().get("result", {}).get("courses", [])
+
+        needle = course_name.strip().lower()
+        matches = [
+            c for c in courses
+            if needle and (
+                needle in (c.get("courseName") or "").lower()
+                or (c.get("courseName") or "").lower() in needle
+            )
+        ]
+
+        if not matches:
+            return json.dumps({
+                "email": "{{USER_EMAIL}}", "found": True, "match": "none",
+                "_spoc_replacements": {"{{USER_EMAIL}}": email},
+            }, indent=2)
+
+        completed = [c for c in matches if _is_course_completed(c)]
+
+        if not completed:
+            candidates = [
+                {"course_id": c.get("courseId"), "course_name": c.get("courseName")}
+                for c in matches
+            ]
+            return json.dumps({
+                "email": "{{USER_EMAIL}}", "found": True, "match": "enrolled_incomplete",
+                "candidates": candidates,
+                "_spoc_replacements": {"{{USER_EMAIL}}": email},
+            }, indent=2)
+
+        candidates = [
+            {
+                "course_id": c.get("courseId"),
+                "course_name": c.get("courseName"),
+                "completed_on": c.get("completedOn"),
+            }
+            for c in completed
+        ]
+
+        if len(candidates) == 1:
+            return json.dumps({
+                "email": "{{USER_EMAIL}}", "found": True, "match": "single",
+                **candidates[0],
+                "_spoc_replacements": {"{{USER_EMAIL}}": email},
+            }, indent=2)
+
+        return json.dumps({
+            "email": "{{USER_EMAIL}}", "found": True, "match": "multiple",
+            "candidates": candidates,
+            "_spoc_replacements": {"{{USER_EMAIL}}": email},
+        }, indent=2)
+    except Exception as e:
+        logger.error(f"[recognition_engagement_tools] find_completed_course error: {e}")
         return json.dumps({"found": False, "error": str(e),
                             "_spoc_replacements": {"{{USER_EMAIL}}": email}})
 
@@ -341,7 +452,8 @@ def get_karma_event_status(email: str, event_id: str) -> str:
 def get_recognition_engagement_tools() -> list:
     """Return all tools for the RecognitionEngagementSubgraph in SOP execution order."""
     return [
-        get_completed_courses,     # SOP-RE1 Flow A STEP 0
+        get_completed_courses,     # SOP-RE1 Flow A STEP 0 (no course name in ticket)
+        find_completed_course,     # SOP-RE1 Flow A STEP 0 (course name given in ticket)
         get_completed_events,      # SOP-RE1 Flow B STEP 0 + live-participation timing
         get_karma_course_status,   # SOP-RE1 Flow A STEP 1/2/3 + Edge Case 1
         get_karma_event_status,    # SOP-RE1 Flow B STEP 1 credited check

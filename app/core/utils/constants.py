@@ -19,6 +19,7 @@ ENABLE_ZOHO_TICKET_UPDATE = settings.ENABLE_ZOHO_TICKET_UPDATE
 # list will gracefully skip execution without executing subgraphs or updating Zoho Desk.
 ENABLED_CATEGORIES: list[str] = [
     "ca_apar_issue",
+    "recognition_and_engagement",
 ]
 
 # ── Email HTML Template ────────────────────────────────────────────────────────
