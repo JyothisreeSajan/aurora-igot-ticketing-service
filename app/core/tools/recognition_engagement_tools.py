@@ -37,6 +37,7 @@ from datetime import datetime, timezone
 import requests
 from langchain.tools import tool
 
+from app.core.tools.login_issue_tool import get_mdo_details
 from app.core.utils.config import IGOT_API_HOST_URL, IGOT_KEY
 
 logger = logging.getLogger(__name__)
@@ -447,6 +448,52 @@ def get_karma_event_status(email: str, event_id: str) -> str:
                             "_spoc_replacements": {"{{USER_EMAIL}}": email}})
 
 
+# ── SOP-RE3 STEP 1.1 — eHRMS mapping check ─────────────────────────────────
+
+@tool
+def get_user_ehrms_details(email: str) -> str:
+    """Fetch the user's eHRMS synchronization mapping details via the User Search API.
+
+    Used in SOP-RE3 STEP 1.1 to check whether both fields required for the
+    iGOT<->eHRMS sync are populated.
+
+    Field mapping (confirmed via live UAT inspection):
+      eHRMS ID             -> profileDetails.additionalProperties.externalSystemId
+      External System Name -> profileDetails.additionalProperties.externalSystem
+    """
+    try:
+        url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
+        headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": "application/json"}
+        payload = {"request": {"filters": {"email": email}}}
+        resp = requests.post(url, json=payload, headers=headers, timeout=10)
+        resp.raise_for_status()
+        content = resp.json().get("result", {}).get("response", {}).get("content", [])
+
+        if not content:
+            return json.dumps({"found": False, "message": "User profile not found.",
+                                "_spoc_replacements": {"{{USER_EMAIL}}": email}})
+
+        user = content[0]
+        profile_details = user.get("profileDetails") or {}
+        additional_properties = profile_details.get("additionalProperties") or {}
+
+        ehrms_id = additional_properties.get("externalSystemId")
+        external_system_name = additional_properties.get("externalSystem")
+
+        return json.dumps({
+            "email": "{{USER_EMAIL}}",
+            "found": True,
+            "firstName": user.get("firstName"),
+            "ehrms_id": ehrms_id,
+            "external_system_name": external_system_name,
+            "_spoc_replacements": {"{{USER_EMAIL}}": email},
+        }, indent=2)
+    except Exception as e:
+        logger.error(f"[recognition_engagement_tools] get_user_ehrms_details error: {e}")
+        return json.dumps({"found": False, "error": str(e),
+                            "_spoc_replacements": {"{{USER_EMAIL}}": email}})
+
+
 # ── Convenience list for the subgraph ─────────────────────────────────────────
 
 def get_recognition_engagement_tools() -> list:
@@ -457,4 +504,6 @@ def get_recognition_engagement_tools() -> list:
         get_completed_events,      # SOP-RE1 Flow B STEP 0 + live-participation timing
         get_karma_course_status,   # SOP-RE1 Flow A STEP 1/2/3 + Edge Case 1
         get_karma_event_status,    # SOP-RE1 Flow B STEP 1 credited check
+        get_user_ehrms_details,    # SOP-RE3 STEP 1.1 eHRMS mapping check
+        get_mdo_details,           # SOP-RE3 STEP 1.3/1.4 MDO contact-share
     ]
