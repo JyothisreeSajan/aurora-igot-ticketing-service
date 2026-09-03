@@ -19,6 +19,8 @@
 | `get_completed_events` | `(email)` | Fetch the user's 5 most recent completed events, each pre-annotated with `hours_since_start` / `is_live_participation` — fallback list + timing check (SOP-RE1 Flow B STEP 0/1) |
 | `get_karma_course_status` | `(email, course_id)` | Fetch a course's karma credit status (`completion_credited`, `rating_credited`, `completion_points`, `rating_points`, `acbp`, `has_assessment`, `monthly_rank`) from `/api/karmapoints/read` (SOP-RE1 Flow A STEP 1-3, Edge Case 1) |
 | `get_karma_event_status` | `(email, event_id)` | Fetch whether karma points were credited for a specific event (SOP-RE1 Flow B STEP 1) |
+| `get_user_ehrms_details` | `(email)` | Fetch `ehrms_id` / `external_system_name` from `profileDetails.additionalProperties` via the User Search API (SOP-RE3 STEP 1) |
+| `get_mdo_details` | `(email)` | Fetch the user's MDO Admin contact (Organization, Name, Email) when eHRMS mapping data is missing (SOP-RE3 STEP 1) |
 
 ---
 ---
@@ -137,7 +139,29 @@ No tools. Resolved — informational close: guide the user to the course's TOC p
 
 # SOP-RE3: Learning Hours Issue - eHRMS
 
-**Status:** Not yet defined — placeholder.
+Covers reports that learning progress, course completion, training plans, assessments, or
+learning records are not reflecting in eHRMS.
+
+**STEP 1.** `get_user_ehrms_details(email)`. Route on `ehrms_id` / `external_system_name`:
+
+| ehrms_id | external_system_name | Action |
+|---|---|---|
+| present | present | Resolved. Close. Not an iGOT-side issue — direct the user to eHRMS's own support team; they should be ready to share their Name, Email, and eHRMS ID with that team (information for them to bring, not something to ask the user for here). |
+| missing | — | `get_mdo_details(email)`. MDO found → Resolved. Close — eHRMS ID can only be updated by the org's MDO, not the user; share the MDO contact; note up to 24h for the sync to reflect. MDO not found → **escalate=true** — no MDO Admin found for the org. |
+| present | missing | `get_mdo_details(email)`. MDO found → **escalate=true** — External System Name not updated, MDO contact shared, pending update; still give the user the full guidance (mandatory field, MDO/Admin-only, share contact, 24h note). MDO not found → **escalate=true** — no MDO Admin found for the org. |
+
+`get_mdo_details` returns the contact as masked placeholder tokens (`{{MDO_ADMIN_NAME}}`,
+`{{MDO_ADMIN_EMAIL}}`) — copy them exactly as returned, never invent a name/email.
+
+## SOP-RE3 Outcome Rules — Quick Reference
+
+| Scenario | Escalate? |
+|----------|:-------------:|
+| Both eHRMS ID and External System Name present | ❌ |
+| eHRMS ID missing, MDO found | ❌ |
+| eHRMS ID missing, MDO not found | ✅ |
+| External System Name missing (eHRMS ID present), MDO found | ✅ |
+| External System Name missing (eHRMS ID present), MDO not found | ✅ |
 
 ---
 ---

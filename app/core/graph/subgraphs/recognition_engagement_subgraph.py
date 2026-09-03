@@ -15,6 +15,7 @@ All tools are sourced from app.core.tools.recognition_engagement_tools.
 The full SOP is embedded in RECOGNITION_ENGAGEMENT_SYSTEM_PROMPT — no KB lookup required.
 """
 
+import json
 import logging
 
 from app.core.graph.state import TicketState
@@ -37,6 +38,34 @@ class RecognitionEngagementSubgraph(BaseSubgraph):
 
     def get_tools(self, state: TicketState) -> list:
         return get_recognition_engagement_tools()
+
+    # ── Greeting name fix ────────────────────────────────────────────────────
+    #
+    # Same fix as CaAparSubgraph: the email greeting sometimes falls back to
+    # "there" because the name lookup at intake fails. Fix it here by grabbing
+    # the first name from a tool result we already have, instead of the user.
+
+    _NAME_SOURCE_TOOLS = ("get_user_ehrms_details",)
+
+    def execute_node(self, state: TicketState) -> TicketState:
+        result = super().execute_node(state)
+        first_name = self._extract_first_name(result.get("tool_results") or [])
+        if first_name:
+            result = {**result, "user_first_name": first_name}
+        return result
+
+    def _extract_first_name(self, tool_results: list) -> str | None:
+        for r in reversed(tool_results):
+            if r.get("tool") not in self._NAME_SOURCE_TOOLS:
+                continue
+            try:
+                data = json.loads(r["summary"])
+            except Exception:
+                continue
+            first_name = data.get("firstName") or data.get("first_name")
+            if first_name:
+                return first_name
+        return None
 
 
 # Singleton — compiled once at import time
