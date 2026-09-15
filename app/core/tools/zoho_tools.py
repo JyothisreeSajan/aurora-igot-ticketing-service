@@ -64,7 +64,14 @@ def update_zoho_ticket_direct(
             )
             to_address = ""
 
-        # Also ensure 'aurora' tag is present
+        # Create the draft first — only tag the ticket once we know a draft
+        # actually exists, so we never leave a tag with no draft behind it.
+        result = await create_draft_reply(
+            ticket_id=ticket_id,
+            content=resolution_summary,
+            to=to_address,
+        )
+
         try:
             tag_result = await ensure_aurora_tag(ticket_id)
             # You can log this separately if you want more granular visibility
@@ -76,12 +83,6 @@ def update_zoho_ticket_direct(
             logger.warning(
                 f"[zoho_tools] Failed to ensure 'aurora' tag for ticket {ticket_id}: {e}"
             )
-
-        result = await create_draft_reply(
-            ticket_id=ticket_id,
-            content=resolution_summary,
-            to=to_address,
-        )
 
         return result
 

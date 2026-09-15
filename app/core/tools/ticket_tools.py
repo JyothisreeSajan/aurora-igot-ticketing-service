@@ -44,8 +44,10 @@ def send_to_human_queue(state: TicketState) -> TicketState:
     #   redis_client.zadd("human_queue", {json.dumps(state): time.time()})
     #   freshdesk_client.create_ticket(state)
     # ──────────────────────────────────────────────────────────────────────────
-    
-    update_zoho_ticket_direct(ticket_id, reason, "Escalated")
+
+    # Only tag/draft on Zoho for categories we've actually implemented (e.g. ca_apar_issue)
+    if not state.get("is_category_disabled"):
+        update_zoho_ticket_direct(ticket_id, reason, "Escalated")
 
     log_ticket_outcome(state, outcome="escalated_to_human")
 
