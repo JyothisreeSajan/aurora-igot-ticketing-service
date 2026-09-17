@@ -116,10 +116,15 @@ def _format_email_response(body: str, first_name: str) -> str:
     return build_email_html(body, name=name)
 
 
-def after_intake(state: TicketState) -> Literal["router_node", "notify_user"]:
-    """Route junk/early-resolved messages directly to notify_user, others to router_node."""
+def after_intake(state: TicketState) -> Literal["router_node", "early_exit"]:
+    """
+    Route early-exit tickets (junk, invalid domain, unregistered user,
+    category disabled) to early_exit_node — which only logs the outcome.
+    Zoho draft + tag are NOT written for any of these paths.
+    All other tickets continue to router_node for the full resolution flow.
+    """
     if state.get("is_junk") or state.get("is_resolved"):
-        return "notify_user"
+        return "early_exit"
     return "router_node"
 
 
@@ -156,6 +161,49 @@ def run_general_query_subgraph(state: TicketState) -> TicketState:
 
 
 # ── Utility nodes ─────────────────────────────────────────────────────────────
+
+def early_exit_node(state: TicketState) -> TicketState:
+    """
+    Terminal node for all early-exit paths that do NOT require AI resolution:
+      - Junk / spam messages
+      - Invalid email domain
+      - Unregistered user
+      - Category not in ENABLED_CATEGORIES (category_disabled)
+
+    Intentionally does NOT call notify_user or update_zoho_ticket_direct.
+    Zoho draft and tag updates are reserved for the full resolution path only.
+    Only writes the outcome to the tracking index for analytics.
+    """
+    from app.core.tools.ticket_tools import log_ticket_outcome
+    tid = state.get("ticket_id", "unknown")
+
+    if state.get("is_category_disabled"):
+        outcome = "category_disabled"
+    elif state.get("is_junk"):
+        outcome = "junk"
+    else:
+        # invalid domain or unregistered user — both use is_resolved=True
+        outcome = "early_exit"
+
+    logger.info(
+        f"[early_exit] ticket={tid} outcome={outcome} "
+        f"(is_junk={state.get('is_junk')}, "
+        f"is_category_disabled={state.get('is_category_disabled')}, "
+        f"is_resolved={state.get('is_resolved')}) — "
+        "skipping notify_user and Zoho update."
+    )
+    step = _plan_step(
+        tid,
+        "early_exit",
+        f"Early exit ({outcome}). Zoho draft and tag skipped.",
+        outcome=outcome,
+    )
+    log_ticket_outcome(state, outcome=outcome)
+    return {
+        **state,
+        "graph_plan": list(state.get("graph_plan") or []) + [step],
+    }
+
 
 def promote_draft_to_final(state: TicketState) -> TicketState:
     """Move resolution_draft → final_response, wrapped in the email template."""
@@ -308,6 +356,7 @@ def _build_graph() -> "CompiledGraph":
     g.add_node("recognition_engagement_subgraph",   run_recognition_engagement_subgraph)
     g.add_node("general_query_subgraph",            run_general_query_subgraph)
     # Utility nodes
+    g.add_node("early_exit",                        early_exit_node)   # junk / disabled / invalid domain / unregistered
     g.add_node("promote_draft",                     promote_draft_to_final)
     g.add_node("quality_gate",                      quality_gate_node)
     g.add_node("notify_user",                       notify_user_node)
@@ -320,7 +369,7 @@ def _build_graph() -> "CompiledGraph":
         after_intake,
         {
             "router_node": "router_node",
-            "notify_user": "notify_user",
+            "early_exit":  "early_exit",   # junk / disabled-category / invalid domain / unregistered
         }
     )
 
@@ -360,8 +409,9 @@ def _build_graph() -> "CompiledGraph":
         }
     )
 
-    g.add_edge("notify_user", END)
-    g.add_edge("human_queue", END)
+    g.add_edge("early_exit",   END)
+    g.add_edge("notify_user",  END)
+    g.add_edge("human_queue",  END)
 
     return g.compile()
 

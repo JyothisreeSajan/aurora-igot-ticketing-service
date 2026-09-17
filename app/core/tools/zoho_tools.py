@@ -64,24 +64,31 @@ def update_zoho_ticket_direct(
             )
             to_address = ""
 
-        # Create the draft first — only tag the ticket once we know a draft
-        # actually exists, so we never leave a tag with no draft behind it.
+        # Create the draft first — only tag the ticket once we know the draft
+        # was successfully created, so we never leave a tag with no draft behind it.
         result = await create_draft_reply(
             ticket_id=ticket_id,
             content=resolution_summary,
             to=to_address,
         )
 
-        try:
-            tag_result = await ensure_aurora_tag(ticket_id)
-            # You can log this separately if you want more granular visibility
-            logger.info(
-                f"[zoho_tools] Tag association result for ticket {ticket_id}: "
-                f"{tag_result}"
-            )
-        except Exception as e:
+        draft_id = result.get("id") if isinstance(result, dict) else None
+        if draft_id:
+            # Draft confirmed — now safe to tag the ticket
+            try:
+                tag_result = await ensure_aurora_tag(ticket_id)
+                logger.info(
+                    f"[zoho_tools] Tag association result for ticket {ticket_id}: "
+                    f"{tag_result}"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[zoho_tools] Failed to ensure 'aurora' tag for ticket {ticket_id}: {e}"
+                )
+        else:
             logger.warning(
-                f"[zoho_tools] Failed to ensure 'aurora' tag for ticket {ticket_id}: {e}"
+                f"[zoho_tools] Draft creation returned no id for ticket {ticket_id} "
+                f"(response={result}). Skipping tag update."
             )
 
         return result
