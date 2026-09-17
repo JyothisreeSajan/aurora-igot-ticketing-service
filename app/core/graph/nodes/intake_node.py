@@ -24,14 +24,10 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 from app.core.graph.state import TicketState
 from app.core.utils.constants import (
-    DOMAIN_INVALID_HTML_BODY,
     ENABLED_CATEGORIES,
     JUNK_CONFIDENCE_THRESHOLD,
-    JUNK_HTML_BODY,
-    UNREGISTERED_HTML_BODY,
     VALIDATE_EMAIL,
     GraphStage,
-    build_email_html,
     get_llm_model,
 )
 from app.core.utils.helpers import (
@@ -117,10 +113,7 @@ def intake_node(state: TicketState) -> TicketState:
                 "sub_category":       "",
                 "sub_category_label": "",
                 "confidence":         1.0,
-                "final_response":     build_email_html(
-                    DOMAIN_INVALID_HTML_BODY.format(email=email, domain=domain),
-                    name="User",
-                ),
+                "final_response":     "",
                 "is_resolved":        True,
                 "graph_plan":         list(state.get("graph_plan") or []) + [step],
             }
@@ -146,7 +139,7 @@ def intake_node(state: TicketState) -> TicketState:
             "sub_category":       "",
             "sub_category_label": "",
             "confidence":         junk_conf,
-            "final_response":     build_email_html(JUNK_HTML_BODY, name="User"),
+            "final_response":     "",
             "is_resolved":        True,
             "graph_plan":         list(state.get("graph_plan") or []) + [step],
         }
@@ -173,10 +166,7 @@ def intake_node(state: TicketState) -> TicketState:
                 "sub_category_label": "",
                 "user_first_name":    user_first_name,
                 "confidence":         1.0,
-                "final_response":     build_email_html(
-                    UNREGISTERED_HTML_BODY.format(email=email),
-                    name="User",
-                ),
+                "final_response":     "",
                 "is_resolved":        True,
                 "graph_plan":         list(state.get("graph_plan") or []) + [step],
             }

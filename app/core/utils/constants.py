@@ -18,9 +18,7 @@ ENABLE_ZOHO_TICKET_UPDATE = settings.ENABLE_ZOHO_TICKET_UPDATE
 # List of enabled ticket categories. Tickets classified under any category not in this
 # list will gracefully skip execution without executing subgraphs or updating Zoho Desk.
 ENABLED_CATEGORIES: list[str] = [
-    "ca_apar_issue",
-    "recognition_and_engagement",
-    "profile_and_user_management",
+    "ca_apar_issue"
 ]
 
 # ── Email HTML Template ────────────────────────────────────────────────────────

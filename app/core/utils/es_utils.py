@@ -37,6 +37,8 @@ class ESManager:
         # Define prefixed index names BEFORE _setup_client so _ensure_indices can use them
         self.bot_index = f"{AURORA_APPLICATION_NAME}_{AURORA_APPLICATION_ENVIRONMENT}_{ELASTICSEARCH_BOT_INTERACTION_INDEX}"
         self.logs_index = f"{AURORA_APPLICATION_NAME}_{AURORA_APPLICATION_ENVIRONMENT}_{ELASTICSEARCH_LOGS_INDEX}"
+        self.resolution_feedback_index = "aurora_resolution_feedback"
+        self.user_tickets_index = "aurora_igot_user_tickets"
         self._setup_client()
 
     def _setup_client(self):
@@ -122,6 +124,21 @@ class ESManager:
                             "metadata":         _obj(),
                             "application_name": _kw(),
                             "environment":      _kw(),
+                        }
+                    }
+                }
+            },
+            self.resolution_feedback_index: {
+                "mappings": {
+                    "_doc": {
+                        "properties": {
+                            "ticket_id":          _kw(),
+                            "is_helpful":         {"type": "boolean"},
+                            "category":           _kw(),
+                            "comments":           _txt(),
+                            "submitted_on":       _date(),
+                            "ticket_created_on":  _date(),
+                            "l1_support_team":    _kw()
                         }
                     }
                 }
