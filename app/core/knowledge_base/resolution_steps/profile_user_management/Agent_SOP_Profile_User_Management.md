@@ -20,9 +20,14 @@ Verification, Designation/Group, and Profile Update Use Cases
 |------|-----------|---------|
 | `get_user_transfer_request_details` | `(email)` | Check whether a Transfer Request has already been raised, via `wfTransferRequest` — also the greeting-name source (SOP-A1 STEP 1) |
 | `get_mdo_details_by_org_id` | `(org_id)` | Fetch MDO Admin contact for a SPECIFIC organisation id — unlike `get_mdo_details`, which always derives the org from the user's own profile (SOP-A1 STEP 2) |
-| `get_yp_am_details` | `(ministry_or_state)` | YP/SPOC fallback when no MDO Admin exists — reused from login_issue_tool.py (SOP-A1 STEP 3, Edge Case 2) |
+| `get_yp_am_details` | `(ministry_or_state)` | YP/SPOC fallback when no MDO Admin exists — reused from login_issue_tool.py (SOP-A1 STEP 3, Edge Case 2, SOP-A2 fallback) |
 | `search_organization` | `(org_name)` | Search for an organization by EXACT name (case-insensitive, no partial matching) via the Org Search API (SOP-A1 Edge Case 2) |
 | `search_organization_under_ministry_or_state` | `(ministry_or_state_name, org_name)` | Second-attempt search when the exact name fails: matches the Ministry/State by name, then searches (partial match) for the org under it via the Org Hierarchy Search API (SOP-A1 Edge Case 2) |
+| `get_user_profile` | `(email)` | Ticket owner's OWN organization/ministry details — reused from profile_update_tool.py (SOP-A2 STEP 2A/3.1.1, YP fallback input) |
+| `get_mdo_details` | `(email)` | MDO Admin for the ticket owner's OWN organization — reused from login_issue_tool.py (SOP-A2 STEP 2A/3.1.1) |
+| `validate_new_contact_domain` | `(new_email)` | Domain-whitelist check for the NEW email the user wants to update to — NOT the ticket owner's own email (SOP-A2 STEP 2) |
+| `check_contact_registered` | `(new_contact)` | Checks whether the new Email ID / Mobile Number is already registered to another account; auto-detects email vs. mobile (SOP-A2 STEP 3) |
+| `get_enrollment_summary` | `(user_id)` | Enrollment counts (In-Progress/Completed) for the OTHER account already linked to the new contact — internal escalation-note use only (SOP-A2 STEP 4.1) |
 
 ---
 ---
@@ -30,9 +35,9 @@ Verification, Designation/Group, and Profile Update Use Cases
 # SOP-A1: Access Revoked
 
 Both Access Revoked scenarios are implemented — Transfer Request already raised, and no
-Transfer Request raised yet. Every other subcategory in this category (Email/Mobile
-already registered, Profile Verification/Verified Badge, Designation/Group Not verified,
-Profile Update) still escalates immediately as out of scope.
+Transfer Request raised yet. SOP-A2 (Email/Mobile already registered, below) is also
+implemented. Every other subcategory in this category (Profile Verification/Verified Badge,
+Designation/Group Not verified, Profile Update) still escalates immediately as out of scope.
 
 Covers users who see: "Your access has been revoked because your organization no longer
 identifies you as a user..." — typically because their organization is mapped as the
@@ -111,3 +116,88 @@ the user wrote it.
 | Transfer Request raised, MDO Admin found | ❌ |
 | Transfer Request raised, no MDO, YP/SPOC found | ❌ |
 | Transfer Request raised, neither MDO nor YP/SPOC | ✅ |
+
+---
+---
+
+# SOP-A2: Email / Mobile Already Registered
+
+Covers users trying to update the Email ID or Mobile Number on their profile — asking how,
+reporting an error during the update, or reporting the new contact is "already registered".
+
+**Before STEP 1.** If the message reports not receiving an OTP during an update attempt
+(and isn't a fresh "how do I update" question), skip directly to STEP 3.1.1.
+
+**STEP 1.** Identify the new Email ID / Mobile Number from the message.
+  Not present → ask the user to share it (no ticket, wait for reply).
+  Present, is an email → STEP 2. Is a mobile number → STEP 3 (no domain to check).
+
+**STEP 2.** `validate_new_contact_domain(new_email)` — domain whitelist check on the NEW
+contact (never the ticket owner's own, already-whitelisted, email).
+  Whitelisted → STEP 3. Not whitelisted → STEP 2A.
+
+**STEP 2A — Domain Not Whitelisted.** `get_user_profile(email=<owner>)` for the owner's own
+org/ministry, then `get_mdo_details(email=<owner>)` for their MDO Admin.
+  MDO found → Resolved. Close — share MDO contact, explain the domain isn't whitelisted.
+  MDO not found → `get_yp_am_details(ministry_or_state=<owner's org/ministry>)`.
+    YP/SPOC found → Resolved. Close — share YP/SPOC contact.
+    YP/SPOC not found → **escalate=true**.
+
+**STEP 3.** `check_contact_registered(new_contact)` — auto-detects email vs. mobile
+(mobile is matched via the private User Search API's `phone` filter, plain 10-digit number,
+no country code).
+  Not registered → STEP 3.1. Already registered → STEP 3.2 (confirm it's genuinely a
+  different account, not the ticket owner's own).
+
+**STEP 3.1 — Not Registered.** Resolved. Close — confirm the contact is available; guide the
+user through the profile update (View Profile → Other Details → Edit icon → enter new
+contact → Request OTP → verify OTP → Save Changes).
+
+**STEP 3.1.1 — OTP Not Received.** Never generate/verify an OTP directly. Same MDO → YP/SPOC
+lookup pattern as STEP 2A, for the ticket owner's own organization.
+  MDO or YP/SPOC found → Resolved. Close — share contact.
+  Neither found → **escalate=true**.
+
+**STEP 3.2 — Confirm the Match Isn't the Ticket Owner's Own Account.**
+`check_contact_registered` matches ANY account already using that contact — including the
+ticket owner's own, if they simply re-sent their current Email ID / Mobile Number unchanged.
+`get_user_profile(email=<owner>)` (reuse if already called this turn) for the owner's own
+user id.
+  matched_user_id == owner's own id → STEP 3.3 (their own account — not a duplicate).
+  matched_user_id != owner's own id → STEP 4 (genuinely a different account).
+
+**STEP 3.3 — Contact Is Already the Owner's Own.** Resolved. Close — no ticket. Tell the
+user the Email ID / Mobile Number they provided is already the one on their own account, so
+no update is needed; ask them to share a different one if they meant to update to something
+else.
+
+**STEP 4 — Registered to a Different Account.** `get_enrollment_summary(user_id=<matched_user_id>)`
+for the OTHER account's enrollment counts — for the internal escalation note only, never
+shared with the end user. First reply: explain the contact is linked to another account, that
+proceeding will deactivate that account while the user's own learning records stay put,
+restate current vs. new contact, and ask for explicit confirmation. Stop and wait for the
+reply.
+
+**STEP 4 (continuation).**
+  Affirmative → STEP 4.4.
+  Negative → Resolved. Close — no changes made, no ticket.
+  Ambiguous → ask again for a clear Yes/No (no ticket yet).
+
+**STEP 4.4 — Confirmed.** `escalate=true`. Escalation note must include: owner's user id and
+current email, the new contact requested, confirmation received, the other account's org and
+enrollment counts, and confirmation the user understands the other account will be
+deactivated. Tell the user the request has been recorded and shared with the team.
+
+## SOP-A2 Outcome Rules — Quick Reference
+
+| Scenario | Escalate? |
+|----------|:-------------:|
+| No new contact given yet | ❌ (ask for it) |
+| Domain not whitelisted, MDO or YP/SPOC found | ❌ |
+| Domain not whitelisted, neither found | ✅ |
+| Not registered | ❌ |
+| Not registered, OTP not received, MDO or YP/SPOC found | ❌ |
+| Not registered, OTP not received, neither found | ✅ |
+| Registered, matched account is the ticket owner's own | ❌ |
+| Registered to a different account, user declines | ❌ |
+| Registered to a different account, user confirms | ✅ |

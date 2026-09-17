@@ -17,6 +17,7 @@ Subclasses override:
 
 import json
 import logging
+import re
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Literal
@@ -52,6 +53,34 @@ _llm_execute = ChatGoogleGenerativeAI(
 
 
 from app.core.utils.ticket_tracker import ticket_tracker
+
+
+_EMAIL_RE  = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+_MOBILE_RE = re.compile(r"(?:\+?91[-\s]?)?[6-9]\d{9}\b")
+
+
+def _recover_new_contact(raw_message: str, owner_email: str) -> str | None:
+    """Recover the real "new" email/mobile the user wants to update to from the
+    RAW (unmasked) ticket message.
+
+    execute_node's tool-calling LLM only ever sees a PII-masked copy of the
+    message (real emails/phones replaced with `<EMAIL_ADDRESS>` / `<PHONE_NUMBER>`
+    placeholders), so any `new_email` / `new_contact` tool argument it produces
+    is just that placeholder, not a usable value. Tools take these arguments
+    (rather than `email`, which IS already securely re-injected from state)
+    because the value they need is the NEW contact the user is asking to
+    switch to — which is never the ticket owner's own (already known) email
+    and only ever appears in the free-text message.
+    """
+    raw_message = raw_message or ""
+    emails = _EMAIL_RE.findall(raw_message)
+    others = [e for e in emails if e.strip().lower() != (owner_email or "").strip().lower()]
+    if others:
+        return others[-1]
+    if emails:
+        return emails[-1]
+    mobiles = _MOBILE_RE.findall(raw_message)
+    return mobiles[-1] if mobiles else None
 
 
 def _plan_step(ticket_id: str, node: str, detail: str, **extra) -> dict:
@@ -211,6 +240,16 @@ class BaseSubgraph(ABC):
                     if "email" in tool_args:
                         logger.info(f"[{self.CATEGORY}] secure tool email injection for tool='{tool_name}'")
                         tool_args["email"] = state.get("email", "")
+
+                    # Recover the real new-contact value for tools that take `new_email` /
+                    # `new_contact` — the LLM only saw a PII-masked message, so its value
+                    # here is just a `<EMAIL_ADDRESS>` placeholder, not a usable argument.
+                    for arg_name in ("new_email", "new_contact"):
+                        if arg_name in tool_args:
+                            recovered = _recover_new_contact(message, state.get("email", ""))
+                            if recovered:
+                                logger.info(f"[{self.CATEGORY}] secure new-contact recovery for tool='{tool_name}'")
+                                tool_args[arg_name] = recovered
                         
                     logger.debug(f"[{self.CATEGORY}] tool={tool_name} args={tool_args}")
                     try:
