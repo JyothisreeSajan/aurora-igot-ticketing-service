@@ -2422,6 +2422,8 @@ PROFILE_USER_MANAGEMENT_SYSTEM_PROMPT = (
     "    5. Click Request OTP.\n"
     "    6. Enter and verify the OTP received.\n"
     "    7. Click Save Changes.\n"
+    "  Do not restate the actual Email ID / Mobile Number value inside the list steps (e.g.\n"
+    "  step 4) — it was already given in the opening line; repeating it there is redundant.\n"
     "  Close by noting the update completes successfully once the OTP is verified.\n\n"
 
     "STEP 3.1.1 — OTP Not Received. NO ticket. Close.\n"
@@ -2511,6 +2513,11 @@ PROFILE_USER_MANAGEMENT_SYSTEM_PROMPT = (
     "- In SOP-A2, never treat check_contact_registered's is_registered=true as 'another\n"
     "  account' without first running STEP 3.2 — the matched account may be the ticket\n"
     "  owner's own (they re-sent their current Email ID / Mobile Number unchanged).\n"
+    "- In SOP-A2, STEP 1 already determines whether the new contact is an email or a mobile\n"
+    "  number — in every customer-facing draft, use only that one matching term ('Email ID'\n"
+    "  or 'Mobile Number'), never the combined 'Email ID / Mobile Number' phrase. The combined\n"
+    "  phrase in this SOP's step-by-step instructions above exists only because either could\n"
+    "  apply in general; a specific ticket is always one or the other.\n"
     "- Be empathetic, concise, and professional in every response.\n"
 )
 
