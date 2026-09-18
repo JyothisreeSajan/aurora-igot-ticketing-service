@@ -6,7 +6,9 @@ Specialist subgraph for Profile & User Management issues on iGOT Karmayogi.
 Categories handled (from CATEGORY_SUBCATEGORY_MAP → profile_and_user_management):
   - Access Revoked                          [SOP-A1 — implemented, both transfer-already-
                                               raised and no-transfer-raised-yet cases]
-  - Email / Mobile already registered       [not yet implemented — escalates]
+  - Email / Mobile already registered       [SOP-A2 — implemented: domain check, duplicate-
+                                              registration check, and confirm-then-escalate
+                                              flow for accounts already linked elsewhere]
   - Profile Verification / Verified Badge   [not yet implemented — escalates]
   - Designation / Group Not verified        [not yet implemented — escalates]
   - Profile Update                          [SOP-P1/P2/P3/P4 implemented — Name Update,
@@ -42,6 +44,36 @@ class ProfileUserManagementSubgraph(BaseSubgraph):
 
     def get_tools(self, state: TicketState) -> list:
         return get_profile_user_management_tools()
+
+    # ── Greeting name fix ────────────────────────────────────────────────────
+    #
+    # Same fix as CaAparSubgraph/RecognitionEngagementSubgraph: the email
+    # greeting falls back to "there" when intake's own name lookup doesn't
+    # surface the real first name. get_user_transfer_request_details (SOP-A1)
+    # and get_user_profile (SOP-A2, aliased get_own_profile_details) both
+    # already return firstName for the ticket owner's own account.
+
+    _NAME_SOURCE_TOOLS = ("get_user_transfer_request_details", "get_user_profile")
+
+    def execute_node(self, state: TicketState) -> TicketState:
+        result = super().execute_node(state)
+        first_name = self._extract_first_name(result.get("tool_results") or [])
+        if first_name:
+            result = {**result, "user_first_name": first_name}
+        return result
+
+    def _extract_first_name(self, tool_results: list) -> str | None:
+        for r in reversed(tool_results):
+            if r.get("tool") not in self._NAME_SOURCE_TOOLS:
+                continue
+            try:
+                data = json.loads(r["summary"])
+            except Exception:
+                continue
+            first_name = data.get("firstName") or data.get("first_name")
+            if first_name:
+                return first_name
+        return None
 
     # ── Genuine dead-end -> real human hand-off, no automated email ──────────
     #

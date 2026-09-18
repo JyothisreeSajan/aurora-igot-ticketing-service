@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 from app.api.health.router import router as health_router
+from app.api.feedback.router import router as feedback_router
+from app.api.dashboard.router import router as dashboard_router
 from app.core.graph.graph_router import router as ticket_router
 
 
@@ -77,6 +79,8 @@ app.add_middleware(
 
 # Include routers
 app.include_router(health_router, prefix="/api/v1/health")
+app.include_router(feedback_router, prefix="/api/v1/feedback", tags=["Feedback"])
+app.include_router(dashboard_router, prefix="/api/v1/dashboard", tags=["Dashboard"])
 app.include_router(ticket_router)
 
 

@@ -45,9 +45,10 @@ def send_to_human_queue(state: TicketState) -> TicketState:
     #   freshdesk_client.create_ticket(state)
     # ──────────────────────────────────────────────────────────────────────────
 
-    # Only tag/draft on Zoho for categories we've actually implemented (e.g. ca_apar_issue)
-    if not state.get("is_category_disabled"):
-        update_zoho_ticket_direct(ticket_id, reason, "Escalated")
+    # Zoho is intentionally NOT updated for escalations.
+    # A draft reply is only created when the AI successfully resolves a ticket
+    # in an enabled category — never for human hand-offs.
+    logger.info(f"[human_queue] Skipping Zoho draft for escalated ticket {ticket_id} (HIL hand-off only).")
 
     log_ticket_outcome(state, outcome="escalated_to_human")
 
@@ -90,11 +91,37 @@ def notify_user(state: TicketState) -> TicketState:
         f"(ticket {ticket_id}, source {source}): {response[:100]}..."
     )
 
-    # Update the Zoho ticket with the final resolution before completing the flow (if category is enabled)
-    if not state.get("is_category_disabled"):
+    # Create a Zoho draft ONLY when the AI genuinely resolved the ticket AND
+    # the category is in the enabled list.  Junk, invalid-domain, and
+    # unregistered-user early-exit paths all set is_junk=True or arrive here
+    # via is_resolved=True without going through a subgraph — we detect those
+    # with the combined guard below so they never write to Zoho.
+    ai_resolved = (
+        not state.get("is_category_disabled")
+        and not state.get("is_junk")
+        and not state.get("escalated_to_human")
+        and state.get("is_resolved", False)
+    )
+    if ai_resolved:
         update_zoho_ticket_direct(ticket_id, response, "Resolved")
+    else:
+        logger.info(
+            f"[notify] Skipping Zoho draft for ticket {ticket_id} "
+            f"(is_category_disabled={state.get('is_category_disabled')}, "
+            f"is_junk={state.get('is_junk')}, "
+            f"escalated_to_human={state.get('escalated_to_human')}, "
+            f"is_resolved={state.get('is_resolved')})"
+        )
 
-    log_ticket_outcome(state, outcome="resolved" if not state.get("is_category_disabled") else "category_disabled")
+    if state.get("is_category_disabled"):
+        outcome = "category_disabled"
+    elif state.get("is_junk"):
+        outcome = "junk"
+    elif not ai_resolved:
+        outcome = "skipped_zoho"
+    else:
+        outcome = "resolved"
+    log_ticket_outcome(state, outcome=outcome)
     return state
 
 
