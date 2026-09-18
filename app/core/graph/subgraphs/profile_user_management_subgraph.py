@@ -9,7 +9,9 @@ Categories handled (from CATEGORY_SUBCATEGORY_MAP → profile_and_user_managemen
   - Email / Mobile already registered       [not yet implemented — escalates]
   - Profile Verification / Verified Badge   [not yet implemented — escalates]
   - Designation / Group Not verified        [not yet implemented — escalates]
-  - Profile Update                          [not yet implemented — escalates]
+  - Profile Update                          [SOP-P1/P2/P3/P4 implemented — Name Update,
+                                              Display Name Update, Designation Not Found,
+                                              Email/Mobile OTP Not Received]
 
 All tools are sourced from app.core.tools.profile_user_management_tools.
 The full SOP is embedded in PROFILE_USER_MANAGEMENT_SYSTEM_PROMPT — no KB lookup required.
