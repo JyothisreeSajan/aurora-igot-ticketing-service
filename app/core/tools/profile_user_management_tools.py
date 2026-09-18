@@ -11,6 +11,25 @@ Covers SOP workflows from Agent_SOP_Profile_User_Management.md:
           get_mdo_details_by_org_id          -> STEP 2 MDO lookup for the
                                                  target transfer organisation
                                                  (not the user's own org)
+
+  SOP-A2  Email / Mobile Already Registered
+          validate_new_contact_domain -> STEP 2 domain check on the NEW contact
+          check_contact_registered    -> STEP 3 duplicate-registration check
+          get_enrollment_summary      -> STEP 4.1 enrollment counts for the
+                                          already-registered (other) account
+
+          NOTE on parameter naming: execute_node's secure tool-email-injection
+          (base_subgraph.py) force-overwrites any tool argument literally named
+          `email` with the ticket owner's own address, so the LLM can never
+          control which account a tool inspects. SOP-A2 genuinely needs to look
+          up a DIFFERENT contact (the new email/mobile, which may belong to
+          another person entirely) — so its tools use `new_email`/`new_contact`
+          param names to stay outside that guard. To keep this from becoming an
+          unbounded PII-lookup surface, only generic fields (is_registered,
+          rootOrgName, enrollment counts) are ever returned, and the SOP script
+          restricts what reaches the end user: the matched account's identity
+          and course-level details are for the internal escalation note only,
+          never quoted back to the customer.
 """
 
 import json
@@ -270,16 +289,154 @@ def search_organization_under_ministry_or_state(ministry_or_state_name: str, org
         })
 
 
+# ── SOP-A2 STEP 2 — domain check for the NEW contact (not the ticket owner) ──
+# Deliberately NOT named `validate_email_domain(email=...)` / reused from
+# login_issue_tool — that param name would be hijacked by execute_node's
+# secure email-injection (see module docstring). This checks the domain of
+# the NEW email the user wants to update to, which is frequently NOT the
+# ticket owner's own (already-whitelisted) address.
+
+@tool
+def validate_new_contact_domain(new_email: str) -> str:
+    """Check if the domain of a NEW email address is whitelisted on the iGOT
+    platform.
+
+    Used in SOP-A2 STEP 2 — only for email updates. Mobile number updates have
+    no domain to validate; skip this tool for those.
+    """
+    domain = new_email.split("@")[-1].strip().lower()
+    url = f"{IGOT_API_HOST_URL}/api/user/v1/email/approvedDomains"
+    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": "application/json"}
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        domains = resp.json().get("result", {}).get("domains", [])
+        whitelisted = [d.strip().lower() for d in domains if isinstance(d, str)]
+        return json.dumps({
+            "new_email": "{{NEW_CONTACT}}",
+            "is_whitelisted": domain in whitelisted,
+            "_spoc_replacements": {"{{NEW_CONTACT}}": new_email},
+        })
+    except Exception as e:
+        logger.error(f"[profile_user_management_tools] validate_new_contact_domain error: {e}")
+        return json.dumps({"is_whitelisted": False, "error": str(e)})
+
+
+# ── SOP-A2 STEP 3 — duplicate-registration check for the NEW contact ────────
+
+@tool
+def check_contact_registered(new_contact: str) -> str:
+    """Check whether the NEW Email ID or Mobile Number the user wants to update
+    to is already registered to another account on the iGOT platform.
+
+    Used in SOP-A2 STEP 3. Auto-detects whether `new_contact` is an email
+    (contains '@') or a mobile number (digits) and filters the User Search API
+    accordingly:
+      - email  -> filters: {"email": new_contact}
+      - mobile -> filters: {"phone": <last 10 digits of new_contact>}
+        (confirmed field name: private User Search API filters on plain
+        10-digit "phone", no country code)
+
+    Returns is_registered, plus (if found) the matched account's user_id and
+    organisation — needed for get_enrollment_summary. These matched-account
+    details are for the internal escalation note only; never surface the
+    other account's identity to the end user directly.
+    """
+    contact = new_contact.strip()
+    is_email = "@" in contact
+    if is_email:
+        filter_key, filter_value = "email", contact
+    else:
+        filter_key, filter_value = "phone", "".join(ch for ch in contact if ch.isdigit())[-10:]
+
+    url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
+    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": "application/json"}
+    try:
+        payload = {"request": {"filters": {filter_key: filter_value}}}
+        resp = requests.post(url, json=payload, headers=headers, timeout=10)
+        resp.raise_for_status()
+        content = resp.json().get("result", {}).get("response", {}).get("content", [])
+
+        if not content:
+            return json.dumps({
+                "new_contact": "{{NEW_CONTACT}}",
+                "contact_type": "email" if is_email else "mobile",
+                "is_registered": False,
+                "_spoc_replacements": {"{{NEW_CONTACT}}": contact},
+            })
+
+        user = content[0]
+        return json.dumps({
+            "new_contact": "{{NEW_CONTACT}}",
+            "contact_type": "email" if is_email else "mobile",
+            "is_registered": True,
+            "matched_user_id": user.get("id"),
+            "matched_rootOrgId": user.get("rootOrgId"),
+            "matched_rootOrgName": user.get("rootOrgName"),
+            "matched_status": user.get("status"),
+            "_spoc_replacements": {"{{NEW_CONTACT}}": contact},
+        }, indent=2)
+    except Exception as e:
+        logger.error(f"[profile_user_management_tools] check_contact_registered error: {e}")
+        return json.dumps({
+            "contact_type": "email" if is_email else "mobile",
+            "is_registered": False,
+            "error": str(e),
+        })
+
+
+# ── SOP-A2 STEP 4.1 — enrollment summary for the ALREADY-REGISTERED account ──
+
+def _fetch_enrollment_count(user_id: str, status: list) -> int:
+    """Internal helper: count enrollments for user_id matching the given status list."""
+    url = f"{IGOT_API_HOST_URL}/api/course/private/v4/user/enrollment/list/{user_id}"
+    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": "application/json"}
+    resp = requests.post(url, headers=headers, json={"request": {"status": status}}, timeout=10)
+    resp.raise_for_status()
+    return len(resp.json().get("result", {}).get("courses", []))
+
+
+@tool
+def get_enrollment_summary(user_id: str) -> str:
+    """Fetch enrollment counts for the account already associated with the new
+    contact, identified by matched_user_id from check_contact_registered.
+
+    Used in SOP-A2 STEP 4.1, strictly for the internal escalation note handed
+    to the human agent — never quote these counts back to the end user.
+
+    enrolled_count is the sum of in_progress_count + completed_count (courses
+    in other states, if any exist on the platform, are not included).
+    """
+    try:
+        in_progress = _fetch_enrollment_count(user_id, ["In-Progress"])
+        completed = _fetch_enrollment_count(user_id, ["Completed"])
+        return json.dumps({
+            "user_id": user_id,
+            "in_progress_count": in_progress,
+            "completed_count": completed,
+            "enrolled_count": in_progress + completed,
+        })
+    except Exception as e:
+        logger.error(f"[profile_user_management_tools] get_enrollment_summary error: {e}")
+        return json.dumps({"user_id": user_id, "error": str(e)})
+
+
 # ── Convenience list for the subgraph ─────────────────────────────────────────
 
 def get_profile_user_management_tools() -> list:
     """Return all tools for the ProfileUserManagementSubgraph."""
-    from app.core.tools.login_issue_tool import get_yp_am_details
+    from app.core.tools.login_issue_tool import get_mdo_details, get_yp_am_details
+    from app.core.tools.profile_update_tool import get_user_profile as get_own_profile_details
 
     return [
         get_user_transfer_request_details,  # SOP-A1 STEP 1
         get_mdo_details_by_org_id,          # SOP-A1 STEP 2
         search_organization,                # SOP-A1 Edge Case 2 (exact name)
         search_organization_under_ministry_or_state,  # SOP-A1 Edge Case 2 (Ministry/State + org)
-        get_yp_am_details,                  # SOP-A1 STEP 3 / Edge Case 2 YP/SPOC fallback
+        get_yp_am_details,                  # SOP-A1 STEP 3 / Edge Case 2 YP/SPOC fallback, SOP-A2 fallback
+        get_own_profile_details,            # SOP-A2 STEP 2A/3.1.1/3.2 — ticket owner's own org name / user id
+        get_mdo_details,                    # SOP-A2 STEP 2A/3.1.1 — MDO for the ticket owner's own org
+        validate_new_contact_domain,        # SOP-A2 STEP 2
+        check_contact_registered,           # SOP-A2 STEP 3
+        get_enrollment_summary,             # SOP-A2 STEP 4.1
     ]
