@@ -45,11 +45,11 @@ def pick_mdo_entry(content_list: list[dict]) -> tuple[dict | None, str | None]:
     return None, None
 
 
-def _search_by_role(url: str, headers: dict, org_id: str, role: str, timeout: int = 10) -> list[dict]:
+def _search_by_role(url: str, headers: dict, role: str, extra_filters: dict, timeout: int = 10) -> list[dict]:
     payload = {
         "request": {
             "filters": {
-                "rootOrgId": org_id,
+                **extra_filters,
                 "organisations.roles": [role],
                 "status": 1,
             },
@@ -61,19 +61,36 @@ def _search_by_role(url: str, headers: dict, org_id: str, role: str, timeout: in
     return resp.json().get("result", {}).get("response", {}).get("content", [])
 
 
+def _find_mdo_contact(
+    url: str, headers: dict, extra_filters: dict, timeout: int = 10
+) -> tuple[dict | None, str | None, int]:
+    for role in (MDO_LEADER, MDO_ADMIN):
+        content = _search_by_role(url, headers, role, extra_filters, timeout=timeout)
+        entry, matched_role = pick_mdo_entry(content)
+        if entry is not None:
+            return entry, matched_role, len(content)
+    return None, None, 0
+
+
 def find_mdo_contact(
     url: str, headers: dict, org_id: str, timeout: int = 10
 ) -> tuple[dict | None, str | None, int]:
-    """Find the org's MDO point of contact: MDO_LEADER preferred, MDO_ADMIN fallback.
+    """Find the org's MDO point of contact by rootOrgId: MDO_LEADER preferred,
+    MDO_ADMIN fallback.
 
     Makes up to two API calls, each filtered by a single role, and returns
     as soon as one yields a match. Returns (entry, matched_role, count) —
     count is the number of active holders of matched_role found for the org.
     (None, None, 0) when neither role has an active holder.
     """
-    for role in (MDO_LEADER, MDO_ADMIN):
-        content = _search_by_role(url, headers, org_id, role, timeout=timeout)
-        entry, matched_role = pick_mdo_entry(content)
-        if entry is not None:
-            return entry, matched_role, len(content)
-    return None, None, 0
+    return _find_mdo_contact(url, headers, {"rootOrgId": org_id}, timeout=timeout)
+
+
+def find_mdo_contact_by_channel(
+    url: str, headers: dict, channel: str, timeout: int = 10
+) -> tuple[dict | None, str | None, int]:
+    """Find a department's MDO point of contact by its channel name: MDO_LEADER
+    preferred, MDO_ADMIN fallback. Same two-call, single-role-at-a-time
+    approach as find_mdo_contact, filtered by channel instead of rootOrgId.
+    """
+    return _find_mdo_contact(url, headers, {"channel": channel}, timeout=timeout)

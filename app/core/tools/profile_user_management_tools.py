@@ -12,6 +12,17 @@ Covers SOP workflows from Agent_SOP_Profile_User_Management.md:
                                                  target transfer organisation
                                                  (not the user's own org)
 
+  SOP-A3  Profile Verification / Verified Badge — Designation or Group Not
+          Verified (see the UC-05 API Integration Guide)
+          get_profile_verification_request_details -> STEP 1
+                                                 wfProfileDesignationRequest /
+                                                 wfProfileGroupRequest check
+          get_department_mdo_admin           -> STEP 2 MDO point-of-contact
+                                                 lookup for the pending
+                                                 request's target department
+                                                 (channel filter, MDO_LEADER
+                                                 preferred, MDO_ADMIN fallback)
+
   SOP-P3  Profile Update - Designation Not Found
           search_designation                 -> STEP 1 identify the exact
                                                  designation against master data
@@ -45,7 +56,7 @@ import requests
 from langchain.tools import tool
 
 from app.core.utils.config import IGOT_API_HOST_URL, IGOT_KEY
-from app.core.utils.mdo_lookup import find_mdo_contact
+from app.core.utils.mdo_lookup import find_mdo_contact, find_mdo_contact_by_channel
 
 logger = logging.getLogger(__name__)
 
@@ -281,6 +292,141 @@ def search_organization_under_ministry_or_state(ministry_or_state_name: str, org
             "found": False,
             "error": str(e),
         })
+
+
+# ── SOP-A3 STEP 1 — wfProfileDesignationRequest / wfProfileGroupRequest check ──
+# Per the UC-05 API Integration Guide (flows/mode_b_designation_not_verified.yaml
+# and flows/mode_b_karmayogi_badge_check.yaml — identical API sequence for both):
+# the private profile carries its own pending-request fields separate from
+# wfTransferRequest, and a distinct profileGroupStatus alongside
+# profileDesignationStatus.
+
+@tool
+def get_profile_verification_request_details(email: str) -> str:
+    """Fetch the user's private profile plus any pending designation/group
+    verification request, via the User Search API's wfProfileDesignationRequest
+    and wfProfileGroupRequest fields.
+
+    Used in SOP-A3 STEP 1 to determine whether the profile is already verified,
+    and if not, whether a designation and/or group verification request is
+    already pending (and which department it targets for approval).
+
+    Field mapping (per UC-05 API Integration Guide):
+      profileDetails.profileStatus                      -> profile_status
+      profileDetails.profileDesignationStatus           -> designation_status
+      profileDetails.profileGroupStatus                 -> group_status
+      profileDetails.professionalDetails[0].designation -> designation
+      profileDetails.professionalDetails[0].group       -> group
+      profileDetails.professionalDetails[0].name        -> department_name
+      channel                                           -> department_name fallback
+      wfProfileDesignationRequest.wfId / .departmentName -> pending designation request
+      wfProfileGroupRequest.wfId / .departmentName       -> pending group request
+
+    An empty {} for either wf*Request field means no request of that type has
+    been raised. When both are present, the designation request's department
+    takes priority over the group request's for pending_department_name.
+    """
+    try:
+        url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
+        headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": "application/json"}
+        payload = {"request": {"filters": {"email": email}}}
+        resp = requests.post(url, json=payload, headers=headers, timeout=10)
+        resp.raise_for_status()
+        content = resp.json().get("result", {}).get("response", {}).get("content", [])
+
+        if not content:
+            return json.dumps({"found": False, "message": "User profile not found.",
+                                "_spoc_replacements": {"{{USER_EMAIL}}": email}})
+
+        user = content[0]
+        profile_details = user.get("profileDetails") or {}
+        prof_list = profile_details.get("professionalDetails")
+        prof = prof_list[0] if isinstance(prof_list, list) and prof_list else {}
+
+        wf_designation = user.get("wfProfileDesignationRequest") or {}
+        wf_group = user.get("wfProfileGroupRequest") or {}
+        has_designation_request = bool(wf_designation)
+        has_group_request = bool(wf_group)
+
+        pending_department_name = (
+            wf_designation.get("departmentName") or wf_group.get("departmentName")
+        )
+
+        return json.dumps({
+            "email": "{{USER_EMAIL}}",
+            "found": True,
+            "firstName": user.get("firstName"),
+            "profile_status": profile_details.get("profileStatus"),
+            "designation_status": profile_details.get("profileDesignationStatus"),
+            "group_status": profile_details.get("profileGroupStatus"),
+            "designation": prof.get("designation"),
+            "group": prof.get("group"),
+            "department_name": prof.get("name") or user.get("channel"),
+            "has_designation_request": has_designation_request,
+            "has_group_request": has_group_request,
+            "has_pending_request": has_designation_request or has_group_request,
+            "pending_department_name": pending_department_name,
+            "_spoc_replacements": {"{{USER_EMAIL}}": email},
+        }, indent=2)
+    except Exception as e:
+        logger.error(f"[profile_user_management_tools] get_profile_verification_request_details error: {e}")
+        return json.dumps({"found": False, "error": str(e),
+                            "_spoc_replacements": {"{{USER_EMAIL}}": email}})
+
+
+# ── SOP-A3 STEP 2 — MDO_ADMIN lookup for the pending request's TARGET department ──
+
+@tool
+def get_department_mdo_admin(department_name: str) -> str:
+    """Fetch the MDO point of contact for a specific department/organisation
+    channel name — used once a designation/group verification request is
+    confirmed pending, to find who can approve it.
+
+    Filters by channel=<department_name>, preferring an active MDO_LEADER and
+    falling back to MDO_ADMIN if none is found — same two-call, single-role
+    precedence as get_mdo_details/get_mdo_details_by_org_id, just keyed by
+    channel instead of org_id.
+
+    Used in SOP-A3 STEP 2.
+    """
+    url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
+    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": "application/json"}
+    try:
+        admin, _matched_role, match_count = find_mdo_contact_by_channel(
+            url, headers, department_name, timeout=10
+        )
+
+        if admin is None:
+            return json.dumps({
+                "department_name": department_name,
+                "found": False,
+                "message": f"No active MDO_LEADER or MDO_ADMIN found for department '{department_name}'.",
+            })
+
+        pd = admin.get("profileDetails", {})
+        personal = pd.get("personalDetails", {})
+
+        first_name = personal.get("firstname") or admin.get("firstName") or "MDO Admin"
+        surname = personal.get("surname") or ""
+        real_email = personal.get("primaryEmail") or admin.get("email") or ""
+        real_name = f"{first_name} {surname}".strip()
+
+        spoc_replacements = {}
+        if real_name:
+            spoc_replacements["{{MDO_ADMIN_NAME}}"] = real_name
+        if real_email:
+            spoc_replacements["{{MDO_ADMIN_EMAIL}}"] = real_email
+
+        return json.dumps({
+            "department_name": department_name,
+            "found": True,
+            "admin_name": "{{MDO_ADMIN_NAME}}",
+            "admin_email": "{{MDO_ADMIN_EMAIL}}",
+            "_spoc_replacements": spoc_replacements,
+        })
+    except Exception as e:
+        logger.error(f"[profile_user_management_tools] get_department_mdo_admin error: {e}")
+        return json.dumps({"department_name": department_name, "found": False, "error": str(e)})
 
 
 # ── SOP-P3 STEP 1 — verify the designation against master data ─────────────
@@ -629,14 +775,15 @@ def get_profile_user_management_tools() -> list:
         get_mdo_details_by_org_id,          # SOP-A1 STEP 2
         search_organization,                # SOP-A1 Edge Case 2 (exact name)
         search_organization_under_ministry_or_state,  # SOP-A1 Edge Case 2 (Ministry/State + org)
-        get_yp_am_details,                  # SOP-A1 STEP 3 / Edge Case 2 YP/SPOC fallback, SOP-P3 Case 2
+        get_yp_am_details,                  # SOP-A1 STEP 3 / Edge Case 2 YP/SPOC fallback, SOP-P3 Case 2, SOP-A2 fallback, SOP-A3 YP Fallback
         search_designation,                 # SOP-P3 STEP 1
         get_user_root_org_id,               # SOP-P3 STEP 2
         get_org_imported_designations,      # SOP-P3 STEP 2
-        get_yp_am_details,                  # SOP-A1 STEP 3 / Edge Case 2 YP/SPOC fallback, SOP-A2 fallback
         get_own_profile_details,            # SOP-A2 STEP 2A/3.1.1/3.2 — ticket owner's own org name / user id
         get_mdo_details,                    # SOP-A2 STEP 2A/3.1.1 — MDO for the ticket owner's own org
         validate_new_contact_domain,        # SOP-A2 STEP 2
         check_contact_registered,           # SOP-A2 STEP 3
         get_enrollment_summary,             # SOP-A2 STEP 4.1
+        get_profile_verification_request_details,  # SOP-A3 STEP 1
+        get_department_mdo_admin,           # SOP-A3 STEP 2
     ]
