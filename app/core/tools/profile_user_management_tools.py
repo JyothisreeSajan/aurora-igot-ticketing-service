@@ -45,6 +45,7 @@ import requests
 from langchain.tools import tool
 
 from app.core.utils.config import IGOT_API_HOST_URL, IGOT_KEY
+from app.core.utils.mdo_lookup import find_mdo_contact
 
 logger = logging.getLogger(__name__)
 
@@ -126,27 +127,14 @@ def get_mdo_details_by_org_id(org_id: str) -> str:
         "Content-Type": "application/json",
     }
     try:
-        admin_payload = {
-            "request": {
-                "filters": {
-                    "rootOrgId": org_id,
-                    "organisations.roles": ["MDO_ADMIN"],
-                    "status": 1,
-                }
-            }
-        }
-        admin_resp = requests.post(url, json=admin_payload, headers=headers, timeout=10)
-        admin_resp.raise_for_status()
-        admin_content = admin_resp.json().get("result", {}).get("response", {}).get("content", [])
-
-        if not admin_content:
+        admin, _matched_role, match_count = find_mdo_contact(url, headers, org_id, timeout=10)
+        if admin is None:
             return json.dumps({
                 "org_id": org_id,
                 "found": False,
                 "message": f"No active MDO Admin found for organisation '{org_id}'.",
             })
 
-        admin = admin_content[0]
         pd = admin.get("profileDetails", {})
         personal = pd.get("personalDetails", {})
 
