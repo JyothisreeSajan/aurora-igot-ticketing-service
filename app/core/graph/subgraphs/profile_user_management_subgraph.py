@@ -11,9 +11,12 @@ Categories handled (from CATEGORY_SUBCATEGORY_MAP → profile_and_user_managemen
                                               flow for accounts already linked elsewhere]
   - Profile Verification / Verified Badge   [not yet implemented — escalates]
   - Designation / Group Not verified        [not yet implemented — escalates]
-  - Profile Update                          [SOP-P1/P2/P3/P4 implemented — Name Update,
-                                              Display Name Update, Designation Not Found,
-                                              Email/Mobile OTP Not Received]
+  - Profile Update                          [SOP-P1/P2/P3/P4/P5/P6/P7/P8/P9 implemented —
+                                              Name Update, Display Name Update, Designation
+                                              Not Found, Email/Mobile OTP Not Received,
+                                              Mother Tongue Update, EHRMS ID Update, Date of
+                                              Retirement Update, Service History Update,
+                                              Educational Qualification Update]
 
 All tools are sourced from app.core.tools.profile_user_management_tools.
 The full SOP is embedded in PROFILE_USER_MANAGEMENT_SYSTEM_PROMPT — no KB lookup required.
@@ -90,22 +93,54 @@ class ProfileUserManagementSubgraph(BaseSubgraph):
 
     def decide_node(self, state: TicketState) -> TicketState:
         result = super().decide_node(state)
-        if result.get("escalated_to_human") and self._yp_am_lookup_failed(result.get("tool_results") or []):
+        if not result.get("escalated_to_human"):
+            return result
+
+        tool_results = result.get("tool_results") or []
+        dead_end_reason = None
+        if self._tool_lookup_failed(tool_results, "get_yp_am_details"):
+            # get_yp_am_details is the final fallback for two flows: Access
+            # Revoked (STEP 3 / Edge Case 2) and Date of Retirement Update
+            # (Case 2's MDO->YP chain). Distinguished by which flow-specific
+            # tool was ALSO called this turn — get_user_transfer_request_details
+            # only appears in Access Revoked, get_user_ehrms_details only in
+            # Date of Retirement Update.
+            if any(r.get("tool") == "get_user_ehrms_details" for r in tool_results):
+                dead_end_reason = "Date of Retirement Update: no MDO Admin or YP/SPOC contact found for the user's organisation."
+            else:
+                dead_end_reason = "Access Revoked: no MDO Admin or YP/SPOC contact found for the target organization."
+        elif self._tool_lookup_failed(tool_results, "check_mother_tongue_available"):
+            dead_end_reason = "Mother Tongue Update: reported mother tongue not found in the platform's master data."
+        elif (
+            # get_mdo_details_by_org_id is shared by four flows: Designation
+            # Not Found (Case 2), OTP Not Received, EHRMS ID Update, and
+            # Service History Update. Only the latter three get the silent
+            # hand-off when no MDO is found — Designation Not Found always
+            # ALSO calls get_org_imported_designations first, which the other
+            # three never do, so checking for its absence here scopes this to
+            # exactly those three flows and no others.
+            not any(r.get("tool") == "get_org_imported_designations" for r in tool_results)
+            and self._tool_lookup_failed(tool_results, "get_mdo_details_by_org_id")
+        ):
+            dead_end_reason = "No MDO Admin found for the target organisation."
+
+        if dead_end_reason:
             logger.info(
-                f"[{self.CATEGORY}] Genuine dead end (no MDO/YP found) — no automated "
+                f"[{self.CATEGORY}] Genuine dead end ({dead_end_reason}) — no automated "
                 f"email; routing to human_queue via the existing low-confidence gate."
             )
             result = {
                 **result,
                 "resolution_draft": "",
                 "confidence": 0.0,
-                "escalation_reason": "Access Revoked: no MDO Admin or YP/SPOC contact found for the target organization.",
+                "escalation_reason": dead_end_reason,
             }
         return result
 
-    def _yp_am_lookup_failed(self, tool_results: list) -> bool:
+    def _tool_lookup_failed(self, tool_results: list, tool_name: str) -> bool:
+        """True if the LAST call to tool_name in this turn returned found=false."""
         for r in reversed(tool_results):
-            if r.get("tool") != "get_yp_am_details":
+            if r.get("tool") != tool_name:
                 continue
             try:
                 data = json.loads(r["summary"])
