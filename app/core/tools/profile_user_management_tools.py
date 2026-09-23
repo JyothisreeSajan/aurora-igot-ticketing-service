@@ -60,6 +60,12 @@ from app.core.utils.mdo_lookup import find_mdo_contact, find_mdo_contact_by_chan
 
 logger = logging.getLogger(__name__)
 
+CONTENT_TYPE_JSON = "application/json"
+USER_PROFILE_NOT_FOUND_MESSAGE = "User profile not found."
+USER_EMAIL_PLACEHOLDER = "{{USER_EMAIL}}"
+MDO_ADMIN_NAME_PLACEHOLDER = "{{MDO_ADMIN_NAME}}"
+MDO_ADMIN_EMAIL_PLACEHOLDER = "{{MDO_ADMIN_EMAIL}}"
+
 
 # ── SOP-A1 STEP 1 — wfTransferRequest check ─────────────────────────────────
 
@@ -83,22 +89,22 @@ def get_user_transfer_request_details(email: str) -> str:
     """
     try:
         url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
-        headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": "application/json"}
+        headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
         payload = {"request": {"filters": {"email": email}}}
         resp = requests.post(url, json=payload, headers=headers, timeout=10)
         resp.raise_for_status()
         content = resp.json().get("result", {}).get("response", {}).get("content", [])
 
         if not content:
-            return json.dumps({"found": False, "message": "User profile not found.",
-                                "_spoc_replacements": {"{{USER_EMAIL}}": email}})
+            return json.dumps({"found": False, "message": USER_PROFILE_NOT_FOUND_MESSAGE,
+                                "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email}})
 
         user = content[0]
         wf_transfer = user.get("wfTransferRequest") or {}
         has_transfer_request = bool(wf_transfer)
 
         return json.dumps({
-            "email": "{{USER_EMAIL}}",
+            "email": USER_EMAIL_PLACEHOLDER,
             "found": True,
             "firstName": user.get("firstName"),
             "has_transfer_request": has_transfer_request,
@@ -108,12 +114,12 @@ def get_user_transfer_request_details(email: str) -> str:
             "transfer_org_id": wf_transfer.get("orgId"),
             "transfer_organisation_id": wf_transfer.get("organisationId"),
             "transfer_org_name": wf_transfer.get("orgName"),
-            "_spoc_replacements": {"{{USER_EMAIL}}": email},
+            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
         }, indent=2)
     except Exception as e:
         logger.error(f"[profile_user_management_tools] get_user_transfer_request_details error: {e}")
         return json.dumps({"found": False, "error": str(e),
-                            "_spoc_replacements": {"{{USER_EMAIL}}": email}})
+                            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email}})
 
 
 # ── SOP-A1 STEP 2 — MDO lookup for a SPECIFIC (target) organisation ────────
@@ -135,10 +141,10 @@ def get_mdo_details_by_org_id(org_id: str) -> str:
     url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
     headers = {
         "Authorization": f"Bearer {IGOT_KEY}",
-        "Content-Type": "application/json",
+        "Content-Type": CONTENT_TYPE_JSON,
     }
     try:
-        admin, _matched_role, match_count = find_mdo_contact(url, headers, org_id, timeout=10)
+        admin, _matched_role, _ = find_mdo_contact(url, headers, org_id, timeout=10)
         if admin is None:
             return json.dumps({
                 "org_id": org_id,
@@ -155,9 +161,9 @@ def get_mdo_details_by_org_id(org_id: str) -> str:
 
         spoc_replacements = {}
         if real_name:
-            spoc_replacements["{{MDO_ADMIN_NAME}}"] = real_name
+            spoc_replacements[MDO_ADMIN_NAME_PLACEHOLDER] = real_name
         if real_email:
-            spoc_replacements["{{MDO_ADMIN_EMAIL}}"] = real_email
+            spoc_replacements[MDO_ADMIN_EMAIL_PLACEHOLDER] = real_email
         if real_mobile:
             spoc_replacements["{{MDO_ADMIN_MOBILE}}"] = real_mobile
 
@@ -165,8 +171,8 @@ def get_mdo_details_by_org_id(org_id: str) -> str:
             "org_id": org_id,
             "found": True,
             "rootOrgName": admin.get("rootOrgName", ""),
-            "mdo_admin_name": "{{MDO_ADMIN_NAME}}",
-            "mdo_admin_email": "{{MDO_ADMIN_EMAIL}}",
+            "mdo_admin_name": MDO_ADMIN_NAME_PLACEHOLDER,
+            "mdo_admin_email": MDO_ADMIN_EMAIL_PLACEHOLDER,
             "mdo_admin_mobile": "{{MDO_ADMIN_MOBILE}}",
             "_spoc_replacements": spoc_replacements,
         })
@@ -190,7 +196,7 @@ def search_organization(org_name: str) -> str:
     given by the user, not a fragment of it.
     """
     url = f"{IGOT_API_HOST_URL}/api/org/v1/search"
-    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
     try:
         payload = {"request": {"filters": {"orgName": [org_name]}, "limit": 5}}
         resp = requests.post(url, json=payload, headers=headers, timeout=10)
@@ -225,7 +231,7 @@ def search_organization_under_ministry_or_state(ministry_or_state_name: str, org
       2. Search organizations under that Ministry/State (also partial/
          case-insensitive match on org_name) via the Org Hierarchy Search API.
     """
-    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
     base = IGOT_API_HOST_URL
     try:
         parent_id = None
@@ -328,15 +334,15 @@ def get_profile_verification_request_details(email: str) -> str:
     """
     try:
         url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
-        headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": "application/json"}
+        headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
         payload = {"request": {"filters": {"email": email}}}
         resp = requests.post(url, json=payload, headers=headers, timeout=10)
         resp.raise_for_status()
         content = resp.json().get("result", {}).get("response", {}).get("content", [])
 
         if not content:
-            return json.dumps({"found": False, "message": "User profile not found.",
-                                "_spoc_replacements": {"{{USER_EMAIL}}": email}})
+            return json.dumps({"found": False, "message": USER_PROFILE_NOT_FOUND_MESSAGE,
+                                "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email}})
 
         user = content[0]
         profile_details = user.get("profileDetails") or {}
@@ -353,7 +359,7 @@ def get_profile_verification_request_details(email: str) -> str:
         )
 
         return json.dumps({
-            "email": "{{USER_EMAIL}}",
+            "email": USER_EMAIL_PLACEHOLDER,
             "found": True,
             "firstName": user.get("firstName"),
             "profile_status": profile_details.get("profileStatus"),
@@ -366,12 +372,12 @@ def get_profile_verification_request_details(email: str) -> str:
             "has_group_request": has_group_request,
             "has_pending_request": has_designation_request or has_group_request,
             "pending_department_name": pending_department_name,
-            "_spoc_replacements": {"{{USER_EMAIL}}": email},
+            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
         }, indent=2)
     except Exception as e:
         logger.error(f"[profile_user_management_tools] get_profile_verification_request_details error: {e}")
         return json.dumps({"found": False, "error": str(e),
-                            "_spoc_replacements": {"{{USER_EMAIL}}": email}})
+                            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email}})
 
 
 # ── SOP-A3 STEP 2 — MDO_ADMIN lookup for the pending request's TARGET department ──
@@ -390,9 +396,9 @@ def get_department_mdo_admin(department_name: str) -> str:
     Used in SOP-A3 STEP 2.
     """
     url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
-    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
     try:
-        admin, _matched_role, match_count = find_mdo_contact_by_channel(
+        admin, _matched_role, _ = find_mdo_contact_by_channel(
             url, headers, department_name, timeout=10
         )
 
@@ -413,15 +419,15 @@ def get_department_mdo_admin(department_name: str) -> str:
 
         spoc_replacements = {}
         if real_name:
-            spoc_replacements["{{MDO_ADMIN_NAME}}"] = real_name
+            spoc_replacements[MDO_ADMIN_NAME_PLACEHOLDER] = real_name
         if real_email:
-            spoc_replacements["{{MDO_ADMIN_EMAIL}}"] = real_email
+            spoc_replacements[MDO_ADMIN_EMAIL_PLACEHOLDER] = real_email
 
         return json.dumps({
             "department_name": department_name,
             "found": True,
-            "admin_name": "{{MDO_ADMIN_NAME}}",
-            "admin_email": "{{MDO_ADMIN_EMAIL}}",
+            "admin_name": MDO_ADMIN_NAME_PLACEHOLDER,
+            "admin_email": MDO_ADMIN_EMAIL_PLACEHOLDER,
             "_spoc_replacements": spoc_replacements,
         })
     except Exception as e:
@@ -454,7 +460,7 @@ def _fetch_all_designations() -> list[dict]:
         return _DESIGNATION_CACHE["data"]
 
     url = f"{IGOT_API_HOST_URL}/apis/public/v8/designation/search"
-    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
     all_designations: list[dict] = []
     page_size = 100  # confirmed API max — pageSize > 100 returns HTTP 400
     page_number = 1
@@ -559,14 +565,14 @@ def get_user_root_org_id(email: str) -> str:
     then reads the full user profile for rootOrgId.
     """
     search_url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
-    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
     try:
         search_payload = {"request": {"filters": {"email": email}}}
         search_resp = requests.post(search_url, json=search_payload, headers=headers, timeout=10)
         search_resp.raise_for_status()
         content = search_resp.json().get("result", {}).get("response", {}).get("content", [])
         if not content:
-            return json.dumps({"found": False, "message": "User profile not found."})
+            return json.dumps({"found": False, "message": USER_PROFILE_NOT_FOUND_MESSAGE})
 
         user_id = content[0].get("id")
         if not user_id:
@@ -604,7 +610,7 @@ def get_org_imported_designations(root_org_id: str) -> str:
     filtered to entries with refType == "designation".
     """
     url = f"{IGOT_API_HOST_URL}/api/framework/v1/read/{root_org_id}_odcs"
-    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
     try:
         resp = requests.get(url, headers=headers, timeout=10)
         resp.raise_for_status()
@@ -647,7 +653,7 @@ def validate_new_contact_domain(new_email: str) -> str:
     """
     domain = new_email.split("@")[-1].strip().lower()
     url = f"{IGOT_API_HOST_URL}/api/user/v1/email/approvedDomains"
-    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
     try:
         resp = requests.get(url, headers=headers, timeout=10)
         resp.raise_for_status()
@@ -692,7 +698,7 @@ def check_contact_registered(new_contact: str) -> str:
         filter_key, filter_value = "phone", "".join(ch for ch in contact if ch.isdigit())[-10:]
 
     url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
-    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
     try:
         payload = {"request": {"filters": {filter_key: filter_value}}}
         resp = requests.post(url, json=payload, headers=headers, timeout=10)
@@ -732,7 +738,7 @@ def check_contact_registered(new_contact: str) -> str:
 def _fetch_enrollment_count(user_id: str, status: list) -> int:
     """Internal helper: count enrollments for user_id matching the given status list."""
     url = f"{IGOT_API_HOST_URL}/api/course/private/v4/user/enrollment/list/{user_id}"
-    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
     resp = requests.post(url, headers=headers, json={"request": {"status": status}}, timeout=10)
     resp.raise_for_status()
     return len(resp.json().get("result", {}).get("courses", []))
