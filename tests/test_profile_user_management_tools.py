@@ -20,10 +20,12 @@ import pytest
 from app.core.tools import profile_user_management_tools as put
 from app.core.tools.profile_user_management_tools import (
     check_contact_registered,
+    check_mother_tongue_available,
     get_enrollment_summary,
     get_mdo_details_by_org_id,
     get_org_imported_designations,
     get_profile_user_management_tools,
+    get_user_ehrms_details,
     get_user_root_org_id,
     get_user_transfer_request_details,
     search_designation,
@@ -528,6 +530,88 @@ class TestGetEnrollmentSummary:
         assert "in_progress_count" not in result
 
 
+# ── SOP-P5 STEP 1 — check_mother_tongue_available ───────────────────────────
+
+class TestCheckMotherTongueAvailable:
+    @patch("app.core.tools.profile_user_management_tools.requests.get")
+    def test_found_case_insensitive(self, mock_get):
+        mock_get.return_value = _mock_response({"languages": [{"name": "Hindi"}, {"name": "Tamil"}]})
+
+        result = json.loads(check_mother_tongue_available.func("hindi"))
+
+        assert result["found"] is True
+        assert result["matched_name"] == "Hindi"
+
+    @patch("app.core.tools.profile_user_management_tools.requests.get")
+    def test_not_found(self, mock_get):
+        mock_get.return_value = _mock_response({"languages": [{"name": "Hindi"}]})
+
+        result = json.loads(check_mother_tongue_available.func("Klingon"))
+
+        assert result["found"] is False
+        assert result["matched_name"] is None
+
+    @patch("app.core.tools.profile_user_management_tools.requests.get")
+    def test_exception_is_handled(self, mock_get):
+        mock_get.side_effect = Exception("timeout")
+
+        result = json.loads(check_mother_tongue_available.func("Hindi"))
+
+        assert result["found"] is False
+        assert "error" in result
+
+
+# ── SOP-P7 STEP 1 — get_user_ehrms_details ──────────────────────────────────
+
+class TestGetUserEhrmsDetails:
+    @patch("app.core.tools.profile_user_management_tools.requests.post")
+    def test_user_not_found(self, mock_post):
+        mock_post.return_value = _search_response([])
+
+        result = json.loads(get_user_ehrms_details.func("nobody@x.com"))
+
+        assert result["found"] is False
+
+    @patch("app.core.tools.profile_user_management_tools.requests.post")
+    def test_ehrms_id_set(self, mock_post):
+        user = {
+            "profileDetails": {
+                "additionalProperties": {
+                    "externalSystemId": "EHRMS-123",
+                    "externalSystem": "EHRMS",
+                }
+            }
+        }
+        mock_post.return_value = _search_response([user])
+
+        result = json.loads(get_user_ehrms_details.func("asha@x.com"))
+
+        assert result["found"] is True
+        assert result["ehrms_id_set"] is True
+        assert result["external_system_id"] == "EHRMS-123"
+        assert result["external_system_name"] == "EHRMS"
+
+    @patch("app.core.tools.profile_user_management_tools.requests.post")
+    def test_ehrms_id_not_set(self, mock_post):
+        user = {"profileDetails": {"additionalProperties": {}}}
+        mock_post.return_value = _search_response([user])
+
+        result = json.loads(get_user_ehrms_details.func("ravi@x.com"))
+
+        assert result["found"] is True
+        assert result["ehrms_id_set"] is False
+        assert result["external_system_id"] is None
+
+    @patch("app.core.tools.profile_user_management_tools.requests.post")
+    def test_exception_is_handled(self, mock_post):
+        mock_post.side_effect = Exception("timeout")
+
+        result = json.loads(get_user_ehrms_details.func("err@x.com"))
+
+        assert result["found"] is False
+        assert "error" in result
+
+
 # ── Convenience list ─────────────────────────────────────────────────────────
 
 class TestGetProfileUserManagementTools:
@@ -551,4 +635,6 @@ class TestGetProfileUserManagementTools:
             "get_enrollment_summary",
             "get_profile_verification_request_details",
             "get_department_mdo_admin",
+            "check_mother_tongue_available",
+            "get_user_ehrms_details",
         }
