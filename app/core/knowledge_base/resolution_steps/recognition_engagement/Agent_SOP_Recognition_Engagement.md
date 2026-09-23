@@ -260,10 +260,10 @@ Karmayogi Bharat or DoPT.
 
 **STEP 1.** Resolved. Close. Use exactly this message:
 
-> Karmayogi Siksha Path is maintained by the Directorate of Training (DoT), CBDT. Karmayogi
+> Karmayogi Shiksha Path is maintained by the Directorate of Training (DoT), CBDT. Karmayogi
 > Bharat/DoPT does not have any role in its management or operations.
 >
-> For any queries related to the Karmayogi Siksha Path portal, you are kindly requested to
+> For any queries related to the Karmayogi Shiksha Path portal, you are kindly requested to
 > reach out directly to the DoT, CBDT team: aed4.training@incometax.gov.in.
 >
 > Please feel free to contact us if you need any further assistance.
