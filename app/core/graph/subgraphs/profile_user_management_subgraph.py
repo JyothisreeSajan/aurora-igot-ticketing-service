@@ -9,8 +9,10 @@ Categories handled (from CATEGORY_SUBCATEGORY_MAP → profile_and_user_managemen
   - Email / Mobile already registered       [SOP-A2 — implemented: domain check, duplicate-
                                               registration check, and confirm-then-escalate
                                               flow for accounts already linked elsewhere]
-  - Profile Verification / Verified Badge   [not yet implemented — escalates]
-  - Designation / Group Not verified        [not yet implemented — escalates]
+  - Profile Verification / Verified Badge   [SOP-A3 implemented — same flow as
+  - Designation / Group Not verified          Designation/Group below, wording branches on
+                                              whether the ticket message says "badge" or
+                                              "designation/group"]
   - Profile Update                          [SOP-P1/P2/P3/P4 implemented — Name Update,
                                               Display Name Update, Designation Not Found,
                                               Email/Mobile OTP Not Received]

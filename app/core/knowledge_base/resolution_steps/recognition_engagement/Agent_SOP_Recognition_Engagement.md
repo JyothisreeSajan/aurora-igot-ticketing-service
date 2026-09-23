@@ -62,7 +62,26 @@ course, close unresolved). Match case-insensitively / partially against the resu
 
 **STEP 3 — Monthly cap check.** Read `monthly_rank` (already computed by the tool — counts
 only non-Training-Plan course completions in the same calendar month).
-- `>= 5` → Resolved — only the first 4 completed courses/month are eligible. Close.
+- `>= 5` → Resolved. Close. Use exactly this message (fill in `[course_name]`):
+
+  > With reference to your concern regarding Karma Points for the course "[course_name],"
+  > we would like to inform you that you have already received the Karma Points for the
+  > first four courses completed this month.
+  >
+  > As per the Karma Points criteria:
+  >
+  > Regular Courses: 5 Karma Points are awarded per course completion, up to a maximum of
+  > 20 points per month (for the first four courses only).
+  > Additional Regular Courses: No completion Karma Points are awarded after the first
+  > four courses in a month.
+  > Course Rating: You can earn 2 Rating Points for rating each course, with no limit on
+  > the number of courses rated.
+  > Capacity Building Courses: For courses assigned specifically to your MDO (Capacity
+  > Building Courses), learners earn an additional 5 bonus points per course completion.
+  >
+  > There is no limit to the number of Capacity Building Courses you can complete. For
+  > example, completing 10 such courses will earn you 150 Karma Points (10 courses × 5
+  > points each + 5 bonus points per course).
 - `<= 4` (or unavailable) → **escalate=true** — discrepancy.
 
 ## Flow B — Event karma points not credited
@@ -92,7 +111,8 @@ Expected points: `acbp=true, has_assessment=true` → 15. `acbp=true, has_assess
 - `completion_points` matches expected → Resolved — points are correct. Close.
 - Mismatch, `acbp=true` → **escalate=true**.
 - Mismatch, `acbp=false`, `monthly_rank <= 4` → **escalate=true**.
-- Mismatch, `acbp=false`, `monthly_rank >= 5` → Resolved — first-4-per-month rule explained.
+- Mismatch, `acbp=false`, `monthly_rank >= 5` → Resolved. Close. Use the same scripted
+  Karma Points criteria message as Flow A STEP 3 above.
 
 ## Edge Case 2 — Leaderboard vs overall karma points mismatch
 
@@ -166,7 +186,15 @@ exact week (`reset_week.label`) and minutes spent (`reset_week.minutes`), and th
 back-and-forth), "the user disagrees" is inferred from the ticket message itself — not a
 follow-up turn:
 - Ticket message reads as a plain report (no prior explanation referenced/disputed) →
-  Resolved. Close. No ticket.
+  Resolved. Close. No ticket. Use exactly this message (fill in the bracketed
+  placeholders from `reset_week.label` / `reset_week.minutes`):
+
+  > Based on our system records, in the week of [WEEK Duration], you spent [time spent in
+  > minutes] on the platform. As this is below the 60-minute weekly requirement to
+  > maintain your streak, your weekly clap has reset to zero.
+  >
+  > Please ensure you complete at least 60 minutes of learning activity each week to keep
+  > your streak active.
 - Ticket message itself already disputes/rejects a prior reset explanation (e.g. a
   reopened ticket, or text explicitly rejecting the 60-minute rule as applied to them) →
   **escalate=true** — "Weekly Clap Issue — User Disputes Reset Explanation".
@@ -205,7 +233,7 @@ learning records are not reflecting in eHRMS.
 
 | ehrms_id | external_system_name | Action |
 |---|---|---|
-| present | present | Resolved. Close. Not an iGOT-side issue — direct the user to eHRMS's own support team; they should be ready to share their Name, Email, and eHRMS ID with that team (information for them to bring, not something to ask the user for here). |
+| present | present | Resolved. Close. Use exactly this message: "With reference to your concern regarding the learning hours not reflecting on the eHRMS portal, we have checked and found that your eHRMS ID is already updated on the iGOT Karmayogi Portal. Kindly ensure that the email ID registered on both the iGOT Karmayogi and eHRMS portals is the same. If the learning hours are still not reflecting after verifying the above details, kindly contact the eHRMS Support Team at support.ehrms-dopt@gov.in for further assistance." |
 | missing | — | `get_mdo_details(email)`. MDO found → Resolved. Close — eHRMS ID can only be updated by the org's MDO, not the user; share the MDO contact; note up to 24h for the sync to reflect. MDO not found → **escalate=true** — no MDO Admin found for the org. |
 | present | missing | `get_mdo_details(email)`. MDO found → Resolved. Close — External System Name not updated; mandatory field, MDO/Admin-only; share MDO contact; note up to 24h for the sync to reflect. MDO not found → **escalate=true** — no MDO Admin found for the org. |
 
@@ -230,10 +258,15 @@ learning records are not reflecting in eHRMS.
 No tool calls, no eligibility checks — Shiksha Path is not managed or operated by
 Karmayogi Bharat or DoPT.
 
-**STEP 1.** Resolved. Close. Tell the user Shiksha Path is managed by the Directorate of
-Training, CBDT; Karmayogi Bharat and DoPT do not manage or operate the Shiksha Path portal;
-ask them to coordinate directly with the Directorate of Training / CBDT team for any
-Shiksha Path-related issues; share the support email `aed4.training@incometax.gov.in`.
+**STEP 1.** Resolved. Close. Use exactly this message:
+
+> Karmayogi Shiksha Path is maintained by the Directorate of Training (DoT), CBDT. Karmayogi
+> Bharat/DoPT does not have any role in its management or operations.
+>
+> For any queries related to the Karmayogi Shiksha Path portal, you are kindly requested to
+> reach out directly to the DoT, CBDT team: aed4.training@incometax.gov.in.
+>
+> Please feel free to contact us if you need any further assistance.
 
 ---
 ---
@@ -303,4 +336,44 @@ reflect once verified.
 
 # SOP-RE6: Leader Board Issue
 
-**Status:** Not yet defined — placeholder.
+No API calls — resolved entirely from the ticket message.
+
+**STEP 1 (internal).** Infer the issue type from the user's message:
+- Not displayed / cannot find / not visible / "where is the Leaderboard or Top Karmayogi
+  Dashboard" → STEP 2
+- Not updated / not refreshed / old data / rank unchanged → STEP 3
+- Leaderboard points/rank don't match the Karma points on their profile, or they're
+  confused why the two numbers differ → STEP 4
+- Unclear → ask whether they can't locate the Leaderboard/Top Karmayogi Dashboard, it's
+  showing outdated data, or it doesn't match their profile's Karma points.
+
+**STEP 2 — Leaderboard / Top Karmayogi Dashboard Not Displayed.** Resolved. Close. No
+ticket. Guide: Go to the Home Page → click Leader Dashboard / Leaderboard → you'll be
+redirected to the Leader Card / Top Karmayogi Card.
+
+**STEP 3 — Leaderboard / Top Karmayogi Dashboard Not Updated.** Resolved. Close. No
+ticket. Inform the user the Leaderboard is updated once every month, on the 1st of each
+month.
+
+**STEP 4 — Leaderboard vs Profile Karma Points Mismatch.** Resolved. Close. No ticket.
+Use exactly this message:
+
+> We would like to inform you that the Karma points shown on the leaderboard reflect the
+> points earned in the previous month, whereas the points displayed on your profile
+> represent your overall Karma points.
+>
+> Please note that your rank is determined based on the Karma points earned in the
+> previous month.
+>
+> We hope this clarifies your query. Please feel free to reach out if you need any
+> further assistance.
+
+## SOP-RE6 Outcome Rules — Quick Reference
+
+| Scenario | Escalate? |
+|----------|:-------------:|
+| Leaderboard/dashboard not displayed | ❌ |
+| Leaderboard/dashboard not updated (monthly refresh explained) | ❌ |
+| Leaderboard vs profile Karma points mismatch | ❌ |
+
+No ticket is raised for any scenario in this SOP.

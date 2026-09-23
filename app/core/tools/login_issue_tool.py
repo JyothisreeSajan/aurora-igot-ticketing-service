@@ -28,6 +28,7 @@ import requests
 from langchain.tools import tool
 
 from app.core.utils.config import IGOT_API_HOST_URL, IGOT_KEY
+from app.core.utils.mdo_lookup import find_mdo_contact
 
 logger = logging.getLogger(__name__)
 
@@ -379,26 +380,9 @@ def get_mdo_details(email: str) -> str:
                 "_spoc_replacements": {"{{USER_EMAIL}}": email},
             })
 
-        # ── Step 2: search for MDO_ADMIN in that org ─────────────────────────
-        admin_payload = {
-            "request": {
-                "filters": {
-                    "rootOrgId": root_org_id,
-                    "organisations.roles": ["MDO_ADMIN"],
-                    "status": 1,
-                }
-            }
-        }
-        admin_resp = requests.post(url, json=admin_payload, headers=headers, timeout=10)
-        admin_resp.raise_for_status()
-        admin_data = admin_resp.json()
-
-        admin_content = (
-            admin_data.get("result", {})
-                      .get("response", {})
-                      .get("content", [])
-        )
-        if not admin_content:
+        # ── Step 2: search for MDO_LEADER, falling back to MDO_ADMIN ─────────
+        admin, _matched_role, match_count = find_mdo_contact(url, headers, root_org_id, timeout=10)
+        if admin is None:
             return json.dumps({
                 "root_org_id": root_org_id,
                 "found": False,
@@ -406,7 +390,6 @@ def get_mdo_details(email: str) -> str:
             })
 
         # ── Build filtered result ──────────────────────────────────────────
-        admin = admin_content[0]
         pd = admin.get("profileDetails", {})
         personal = pd.get("personalDetails", {})
 
@@ -438,7 +421,7 @@ def get_mdo_details(email: str) -> str:
         return json.dumps({
             "root_org_id": root_org_id,
             "found":       True,
-            "count":       len(admin_content),
+            "count":       match_count,
             "admins":      admins,
             "_spoc_replacements": spoc_replacements,
         })

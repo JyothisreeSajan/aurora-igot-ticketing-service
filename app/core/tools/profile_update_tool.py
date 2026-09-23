@@ -20,6 +20,7 @@ from langchain.tools import tool
 
 from app.core.utils.config import IGOT_API_HOST_URL, IGOT_KEY
 from app.core.utils.helpers import lookup_yp_by_mdo
+from app.core.utils.mdo_lookup import find_mdo_contact
 
 # ── SOP-P1 — Profile verification / designation / group ───────────────────────
 
@@ -115,32 +116,14 @@ def get_org_admin_details(org_id: str) -> str:
     }
 
     try:
-        admin_payload = {
-            "request": {
-                "filters": {
-                    "rootOrgId": org_id,
-                    "organisations.roles": ["MDO_ADMIN"],
-                    "status": 1,
-                }
-            }
-        }
-        admin_resp = requests.post(url, json=admin_payload, headers=headers, timeout=10)
-        admin_resp.raise_for_status()
-        admin_data = admin_resp.json()
-
-        admin_content = (
-            admin_data.get("result", {})
-                      .get("response", {})
-                      .get("content", [])
-        )
-        if not admin_content:
+        admin, _matched_role, match_count = find_mdo_contact(url, headers, org_id, timeout=10)
+        if admin is None:
             return json.dumps({
                 "org_id": org_id,
                 "found": False,
                 "message": f"No active MDO Admin found for organisation '{org_id}'.",
             })
 
-        admin = admin_content[0]
         pd = admin.get("profileDetails", {})
         personal = pd.get("personalDetails", {})
 
@@ -172,7 +155,7 @@ def get_org_admin_details(org_id: str) -> str:
         return json.dumps({
             "org_id": org_id,
             "found": True,
-            "count": len(admin_content),
+            "count": match_count,
             "admins": admins,
             "org_admin_name": "{{MDO_ADMIN_NAME}}",
             "org_admin_email": "{{MDO_ADMIN_EMAIL}}",
