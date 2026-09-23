@@ -31,6 +31,8 @@ Verification, Designation/Group, and Profile Update Use Cases
 | `validate_new_contact_domain` | `(new_email)` | Domain-whitelist check for the NEW email the user wants to update to — NOT the ticket owner's own email (SOP-A2 STEP 2) |
 | `check_contact_registered` | `(new_contact)` | Checks whether the new Email ID / Mobile Number is already registered to another account; auto-detects email vs. mobile (SOP-A2 STEP 3) |
 | `get_enrollment_summary` | `(user_id)` | Enrollment counts (In-Progress/Completed) for the OTHER account already linked to the new contact — internal escalation-note use only (SOP-A2 STEP 4.1) |
+| `check_mother_tongue_available` | `(mother_tongue_name)` | Checks a user-reported mother tongue against the platform's master language list, case-insensitive exact match (SOP-P5 STEP 1) |
+| `get_user_ehrms_details` | `(email)` | Checks whether the user's EHRMS ID / External System ID is set on their profile (SOP-P7 STEP 1) |
 
 ---
 ---
@@ -38,9 +40,9 @@ Verification, Designation/Group, and Profile Update Use Cases
 # SOP-A1: Access Revoked
 
 Both Access Revoked scenarios are implemented — Transfer Request already raised, and no
-Transfer Request raised yet. SOP-A2 (Email/Mobile already registered, below) is also
-implemented. Every other subcategory in this category (Profile Verification/Verified Badge,
-Designation/Group Not verified, Profile Update) still escalates immediately as out of scope.
+Transfer Request raised yet. SOP-A2 (Email/Mobile already registered, below) and Profile
+Update (SOP-P1–P9, below) are also implemented. Profile Verification/Verified Badge and
+Designation/Group Not verified still escalate immediately as out of scope.
 
 Covers users who see: "Your access has been revoked because your organization no longer
 identifies you as a user..." — typically because their organization is mapped as the
@@ -191,10 +193,119 @@ Mobile Number on their profile.
   make the change on their behalf.
 - MDO not found → **escalate=true**, standard phrasing.
 
-Every other Profile Update request (not Name, Display Name, Designation, or Email/Mobile
-OTP), and every other not-yet-implemented subcategory (Email/Mobile already registered,
-Profile Verification/Verified Badge, Designation/Group Not verified), still escalates
-immediately as out of scope.
+# SOP-P5: Profile Update — Mother Tongue Update
+
+Use Case: user reports their mother tongue is not available while updating their profile.
+
+**STEP 1.** `check_mother_tongue_available(mother_tongue_name)` — case-insensitive exact
+match against the platform's master language list.
+
+- Found → Resolved. Close — give the self-service guide (View Profile → Other Details →
+  Edit icon → select the Mother Tongue → Save).
+- Not found → There is nothing actionable to tell the user — only a human can decide
+  whether to add it to master data. **escalate=true**, routed to a silent `human_queue`
+  hand-off (no automated email — the subgraph structurally detects this dead end).
+
+# SOP-P6: Profile Update — EHRMS ID / External System ID Update
+
+Use Case: user wants to update their EHRMS ID / External System ID, or reports the one
+shown on their profile is incorrect.
+
+`get_user_root_org_id(email)` → the user's own `rootOrgId`.
+`get_mdo_details_by_org_id(root_org_id)` → the user's own MDO Admin.
+
+- MDO found → Resolved. Close — one single, formal response: (1) individual users cannot
+  update the EHRMS ID / External System ID themselves, only their department's MDO can;
+  (2) share MDO Name/Email only (no Mobile); (3) ask the user to share their Registered
+  Email ID, Registered Mobile Number, and the correct EHRMS ID with the MDO.
+- MDO not found → **escalate=true**, silent `human_queue` hand-off (no automated email).
+
+# SOP-P7: Profile Update — Date of Retirement Update
+
+Use Case: user reports Date of Retirement is blank on their profile, or unable to edit it.
+
+**STEP 1.** `get_user_ehrms_details(email)` → `ehrms_id_set`, `external_system_id`,
+`external_system_name`.
+
+- EHRMS ID IS present → Resolved. Close — Date of Retirement is auto-fetched from the
+  EHRMS portal and cannot be edited on iGOT directly; ask the user to update it on the
+  EHRMS portal, where it will automatically reflect back on iGOT.
+- EHRMS ID is NOT present → `get_user_root_org_id(email)` → `get_mdo_details_by_org_id(root_org_id)`.
+  - MDO found → Resolved. Close — single response covering: EHRMS ID isn't set; Date of
+    Retirement is auto-fetched from EHRMS and can't be edited on iGOT directly; the
+    MDO/Nodal Officer needs to (a) set the EHRMS ID and (b) ensure Date of Retirement is
+    correct in EHRMS; once both are done it reflects automatically on iGOT; share MDO
+    Name/Email only.
+  - MDO not found → `get_yp_am_details(ministry_or_state)` fallback. Found → Resolved.
+    Close — same response shape, YP/SPOC contact instead. Not found → **escalate=true**,
+    silent `human_queue` hand-off (no automated email).
+
+# SOP-P8: Profile Update — Service History Update
+
+Service History's current entry is never editable directly — it is always a default value
+derived from the Organization and Designation currently mapped to the user's profile.
+
+**Before STEP 1.** User wants to add a PREVIOUS/past employment entry (distinct from their
+current one) → Case 2. Otherwise (reporting the current Service History entry is wrong,
+blank, or not editable) → Case 1.
+
+## Case 1: User Unable to Edit Service History
+
+**STEP 1.** `get_user_profile(email)` → current `rootOrgName` / designation. Compare
+against the Organization (and Designation, if given) the user believes should be reflected,
+extracted from the ticket message.
+
+- Matches → Resolved. Close — "your Service History entry reflects the current
+  Organization and Designation mapped to your profile, and is accurate. Please feel free to
+  reach out if you require any further assistance."
+- Does not match → STEP 2.
+
+**STEP 2.** Resolved. Close — single response covering: (1) Service History is a default
+value derived from profile Organization/Designation and can't be edited directly; (2)
+Transfer Request steps (View Profile → Transfer Request → update Organization/Designation
+→ Submit for Approval); (3) the Department MDO approves it, and Service History
+auto-updates once approved.
+
+`search_organization(org_name=<org the user named>)` — EXACT match only.
+- found=false → ask the user to confirm the exact Organization name. No ticket.
+- found=true → `get_mdo_details_by_org_id(org_id)` for THAT organization (never the user's
+  own, incorrect, current org).
+  - MDO found → include in the same response: share MDO Name/Email only, ask the user to
+    connect with them if required for approval.
+  - MDO not found → **escalate=true**, silent `human_queue` hand-off (no automated email).
+
+## Case 2: User Wants to Add Previous Employment History
+
+No tool call needed — pure self-service navigation. Resolved. Close. Guide the user:
+View Profile → Service History → Plus (+) icon → enter Organization/Employment Name, Start
+Date, End Date, other required fields → Save.
+
+# SOP-P9: Profile Update — Educational Qualification Update
+
+Use Case: user unable to find their college/institute (or degree) name while adding an
+Educational Qualification.
+
+No tool call needed — pure self-service navigation. Resolved. Close. Guide the user:
+1. Click on View Profile and navigate to the Educational Qualification section.
+2. Click the Plus (+) icon to add a new entry.
+3. Select the Degree Name. If not available in the list, select Other and enter it
+   manually.
+4. Enter the Field of Study.
+5. Select the Institute Name. If not available in the list, select Other and enter the
+   correct college or institute name manually.
+6. Enter the Start Year and End Year, then click Add to save.
+
+Closing: confirm that once these steps are completed, the Educational Qualification will
+be successfully added to the user's profile.
+
+---
+
+Every other subcategory in this category (Profile Verification/Verified Badge,
+Designation/Group Not verified) still escalates immediately as out of scope. Service
+Details (fetching cadre/service master-config data) is on hold, blocked on a lookup that
+requires a real user session token rather than the service-level API key every other tool
+here uses.
+
 # SOP-A2: Email / Mobile Already Registered
 
 Covers users trying to update the Email ID or Mobile Number on their profile — asking how,

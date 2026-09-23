@@ -29,6 +29,29 @@ Covers SOP workflows from Agent_SOP_Profile_User_Management.md:
           get_user_root_org_id                -> STEP 2 the user's own rootOrgId
           get_org_imported_designations        -> STEP 2 has this org's MDO
                                                  imported that designation yet
+
+  SOP-P5  Profile Update - Mother Tongue Update
+          check_mother_tongue_available       -> STEP 1 verify the reported
+                                                 mother tongue against master
+                                                 data. Not found -> silent
+                                                 human_queue hand-off (nothing
+                                                 actionable to tell the user;
+                                                 only a human can decide
+                                                 whether to add it)
+  SOP-P7  Profile Update - Date of Retirement Update
+          get_user_ehrms_details -> EHRMS ID set or not; if not, MDO then
+                                     YP/SPOC fallback
+
+  SOP-P8  Profile Update - Service History Update
+          get_own_profile_details (alias get_user_profile) -> STEP 1 current
+                                     rootOrgName/designation vs. what the user
+                                     says it should be
+          search_organization      -> STEP 2 resolve the org NAMED BY THE
+                                     USER to an org_id (not the user's own,
+                                     currently-mapped org)
+          get_mdo_details_by_org_id -> STEP 2 MDO Admin for that org, to
+                                     approve the resulting Transfer Request
+
   SOP-A2  Email / Mobile Already Registered
           validate_new_contact_domain -> STEP 2 domain check on the NEW contact
           check_contact_registered    -> STEP 3 duplicate-registration check
@@ -769,6 +792,84 @@ def get_enrollment_summary(user_id: str) -> str:
         return json.dumps({"user_id": user_id, "error": str(e)})
 
 
+# ── SOP-P5 — Mother Tongue Update ────────────────────────────────────────────
+
+@tool
+def check_mother_tongue_available(mother_tongue_name: str) -> str:
+    """Check whether a user-reported mother tongue exists in the platform's
+    master language list.
+
+    Used in SOP-P5 STEP 1. Matching is case-insensitive exact match — language
+    names are unambiguous (unlike designations), so no word-boundary/candidate
+    handling is needed here.
+    """
+    url = f"{IGOT_API_HOST_URL}/api/masterData/v1/languages"
+    headers = {"Authorization": f"Bearer {IGOT_KEY}"}
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        languages = resp.json().get("languages", []) or []
+        query_norm = mother_tongue_name.strip().lower()
+        match = next(
+            (lang.get("name") for lang in languages if (lang.get("name") or "").strip().lower() == query_norm),
+            None,
+        )
+        return json.dumps({
+            "query": mother_tongue_name,
+            "found": match is not None,
+            "matched_name": match,
+        })
+    except Exception as e:
+        logger.error(f"[profile_user_management_tools] check_mother_tongue_available error: {e}")
+        return json.dumps({"query": mother_tongue_name, "found": False, "error": str(e)})
+
+
+# ── SOP-P7 — Date of Retirement Update ───────────────────────────────────────
+
+@tool
+def get_user_ehrms_details(email: str) -> str:
+    """Check whether the user's EHRMS ID / External System ID is set on their
+    profile.
+
+    Used in SOP-P7 STEP 1 — Date of Retirement is auto-fetched from the EHRMS
+    portal, but only once the EHRMS ID sync is set up; if it isn't, the user
+    needs their MDO to set it first.
+
+    Field mapping (confirmed via live UAT inspection):
+      EHRMS ID             -> profileDetails.additionalProperties.externalSystemId
+      External System Name -> profileDetails.additionalProperties.externalSystem
+    """
+    url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
+    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": "application/json"}
+    try:
+        payload = {"request": {"filters": {"email": email}}}
+        resp = requests.post(url, json=payload, headers=headers, timeout=10)
+        resp.raise_for_status()
+        content = resp.json().get("result", {}).get("response", {}).get("content", [])
+
+        if not content:
+            return json.dumps({"found": False, "message": USER_PROFILE_NOT_FOUND_MESSAGE,
+                                "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email}})
+
+        user = content[0]
+        additional_properties = (user.get("profileDetails") or {}).get("additionalProperties") or {}
+        external_system_id = additional_properties.get("externalSystemId")
+        external_system_name = additional_properties.get("externalSystem")
+
+        return json.dumps({
+            "email": USER_EMAIL_PLACEHOLDER,
+            "found": True,
+            "ehrms_id_set": bool(external_system_id),
+            "external_system_id": external_system_id,
+            "external_system_name": external_system_name,
+            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
+        })
+    except Exception as e:
+        logger.error(f"[profile_user_management_tools] get_user_ehrms_details error: {e}")
+        return json.dumps({"found": False, "error": str(e),
+                            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email}})
+
+
 # ── Convenience list for the subgraph ─────────────────────────────────────────
 
 def get_profile_user_management_tools() -> list:
@@ -778,18 +879,22 @@ def get_profile_user_management_tools() -> list:
 
     return [
         get_user_transfer_request_details,  # SOP-A1 STEP 1
-        get_mdo_details_by_org_id,          # SOP-A1 STEP 2
-        search_organization,                # SOP-A1 Edge Case 2 (exact name)
+        get_mdo_details_by_org_id,          # SOP-A1 STEP 2, SOP-P6/P7/P8
+        search_organization,                # SOP-A1 Edge Case 2 (exact name), SOP-P8 STEP 2
         search_organization_under_ministry_or_state,  # SOP-A1 Edge Case 2 (Ministry/State + org)
+        get_yp_am_details,                  # SOP-A1 STEP 3 / Edge Case 2 YP/SPOC fallback, SOP-P3 Case 2, SOP-A2 fallback, SOP-P7 fallback
         get_yp_am_details,                  # SOP-A1 STEP 3 / Edge Case 2 YP/SPOC fallback, SOP-P3 Case 2, SOP-A2 fallback, SOP-A3 YP Fallback
         search_designation,                 # SOP-P3 STEP 1
-        get_user_root_org_id,               # SOP-P3 STEP 2
+        get_user_root_org_id,               # SOP-P3 STEP 2, SOP-P6/P7
         get_org_imported_designations,      # SOP-P3 STEP 2
+        get_own_profile_details,            # SOP-A2 STEP 2A/3.1.1/3.2 — ticket owner's own org name / user id; SOP-P8 STEP 1
         get_own_profile_details,            # SOP-A2 STEP 2A/3.1.1/3.2 — ticket owner's own org name / user id
         get_mdo_details,                    # SOP-A2 STEP 2A/3.1.1 — MDO for the ticket owner's own org
         validate_new_contact_domain,        # SOP-A2 STEP 2
         check_contact_registered,           # SOP-A2 STEP 3
         get_enrollment_summary,             # SOP-A2 STEP 4.1
+        check_mother_tongue_available,      # SOP-P5 STEP 1
+        get_user_ehrms_details,             # SOP-P7 STEP 1
         get_profile_verification_request_details,  # SOP-A3 STEP 1
         get_department_mdo_admin,           # SOP-A3 STEP 2
     ]
