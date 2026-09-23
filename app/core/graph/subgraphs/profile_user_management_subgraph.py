@@ -17,6 +17,13 @@ Categories handled (from CATEGORY_SUBCATEGORY_MAP → profile_and_user_managemen
                                               Mother Tongue Update, EHRMS ID Update, Date of
                                               Retirement Update, Service History Update,
                                               Educational Qualification Update]
+  - Profile Verification / Verified Badge   [SOP-A3 implemented — same flow as
+  - Designation / Group Not verified          Designation/Group below, wording branches on
+                                              whether the ticket message says "badge" or
+                                              "designation/group"]
+  - Profile Update                          [SOP-P1/P2/P3/P4 implemented — Name Update,
+                                              Display Name Update, Designation Not Found,
+                                              Email/Mobile OTP Not Received]
 
 All tools are sourced from app.core.tools.profile_user_management_tools.
 The full SOP is embedded in PROFILE_USER_MANAGEMENT_SYSTEM_PROMPT — no KB lookup required.

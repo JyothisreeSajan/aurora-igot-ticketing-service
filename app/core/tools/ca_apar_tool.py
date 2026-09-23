@@ -35,6 +35,8 @@ from app.core.utils.config import IGOT_API_HOST_URL, IGOT_KEY
 
 logger = logging.getLogger(__name__)
 
+CONTENT_TYPE_JSON = "application/json"
+
 ENROLLMENT_FIELDS = [
     "enrolledDate",
     "contentId",
@@ -70,7 +72,7 @@ def get_user_enrollments(email: str, status_filter: str | None = None, content_i
         search_url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
         headers = {
             "Authorization": f"Bearer {IGOT_KEY}",
-            "Content-Type": "application/json",
+            "Content-Type": CONTENT_TYPE_JSON,
         }
         payload = {"request": {"filters": {"email": email}}}
         search_resp = requests.post(search_url, json=payload, headers=headers, timeout=10)
@@ -160,7 +162,7 @@ def get_user_cbp_plan(email: str) -> str:
     search_url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
     headers = {
         "Authorization": f"Bearer {IGOT_KEY}",
-        "Content-Type": "application/json",
+        "Content-Type": CONTENT_TYPE_JSON,
     }
     try:
         profile_payload = {"request": {"filters": {"email": email}}}
@@ -187,7 +189,7 @@ def get_user_cbp_plan(email: str) -> str:
         cbp_url = f"{IGOT_API_HOST_URL}/api/supportportal/cbplan/v2/admin/user/list/{user_id}"
         cbp_headers = {
             "Authorization": f"Bearer {IGOT_KEY}",
-            "Content-Type": "application/json",
+            "Content-Type": CONTENT_TYPE_JSON,
             "x-authenticated-user-orgid": "igot",
         }
         cbp_resp = requests.get(cbp_url, headers=cbp_headers, timeout=15)
@@ -235,7 +237,7 @@ def get_assigned_cap_courses(email: str) -> str:
     search_url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
     headers = {
         "Authorization": f"Bearer {IGOT_KEY}",
-        "Content-Type": "application/json",
+        "Content-Type": CONTENT_TYPE_JSON,
     }
     try:
         profile_payload = {"request": {"filters": {"email": email}}}
@@ -347,7 +349,7 @@ def get_cap_hierarchy(cap_id: str) -> str:
     url = f"{IGOT_API_HOST_URL}/api/private/content/v3/hierarchy/{cap_id}"
     headers = {
         "Authorization": f"Bearer {IGOT_KEY}",
-        "Content-Type": "application/json",
+        "Content-Type": CONTENT_TYPE_JSON,
     }
     try:
         response = requests.get(url, headers=headers, timeout=8)
@@ -405,7 +407,7 @@ def get_assessment_attempt_count(email: str, assessment_identifier: str) -> str:
     search_url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
     headers = {
         "Authorization": f"Bearer {IGOT_KEY}",
-        "Content-Type": "application/json",
+        "Content-Type": CONTENT_TYPE_JSON,
     }
     try:
         profile_payload = {"request": {"filters": {"email": email}}}
@@ -466,7 +468,7 @@ def resolve_org_names(org_ids: list[str]) -> str:
     criteria need no resolution — those are already plain names.
     """
     url = f"{IGOT_API_HOST_URL}/api/org/v1/search"
-    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
     try:
         payload = {"request": {"filters": {"id": org_ids}, "limit": len(org_ids) or 1}}
         resp = requests.post(url, json=payload, headers=headers, timeout=10)
@@ -501,7 +503,7 @@ def get_org_type(root_org_id: str) -> str:
     Returns org_type: "state", "ministry", or "unknown" (neither flag set).
     """
     url = f"{IGOT_API_HOST_URL}/api/org/v1/search"
-    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
     try:
         payload = {"request": {"filters": {"id": [root_org_id]}, "limit": 1}}
         resp = requests.post(url, json=payload, headers=headers, timeout=10)
@@ -562,7 +564,7 @@ def get_user_cap_assignment(email: str) -> str:
     search_url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
     headers = {
         "Authorization": f"Bearer {IGOT_KEY}",
-        "Content-Type": "application/json",
+        "Content-Type": CONTENT_TYPE_JSON,
     }
     try:
         profile_payload = {"request": {"filters": {"email": email}}}
@@ -589,7 +591,7 @@ def get_user_cap_assignment(email: str) -> str:
         cap_url = f"{IGOT_API_HOST_URL}/api/supportportal/admin/user/v2/assignedcourses/{user_id}"
         cap_headers = {
             "Authorization": f"Bearer {IGOT_KEY}",
-            "Content-Type": "application/json",
+            "Content-Type": CONTENT_TYPE_JSON,
             "x-authenticated-user-token": "",
         }
         cap_resp = requests.post(
