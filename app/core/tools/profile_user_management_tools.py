@@ -848,8 +848,8 @@ def get_user_ehrms_details(email: str) -> str:
         content = resp.json().get("result", {}).get("response", {}).get("content", [])
 
         if not content:
-            return json.dumps({"found": False, "message": "User profile not found.",
-                                "_spoc_replacements": {"{{USER_EMAIL}}": email}})
+            return json.dumps({"found": False, "message": USER_PROFILE_NOT_FOUND_MESSAGE,
+                                "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email}})
 
         user = content[0]
         additional_properties = (user.get("profileDetails") or {}).get("additionalProperties") or {}
@@ -857,17 +857,17 @@ def get_user_ehrms_details(email: str) -> str:
         external_system_name = additional_properties.get("externalSystem")
 
         return json.dumps({
-            "email": "{{USER_EMAIL}}",
+            "email": USER_EMAIL_PLACEHOLDER,
             "found": True,
             "ehrms_id_set": bool(external_system_id),
             "external_system_id": external_system_id,
             "external_system_name": external_system_name,
-            "_spoc_replacements": {"{{USER_EMAIL}}": email},
+            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
         })
     except Exception as e:
         logger.error(f"[profile_user_management_tools] get_user_ehrms_details error: {e}")
         return json.dumps({"found": False, "error": str(e),
-                            "_spoc_replacements": {"{{USER_EMAIL}}": email}})
+                            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email}})
 
 
 # ── Convenience list for the subgraph ─────────────────────────────────────────
