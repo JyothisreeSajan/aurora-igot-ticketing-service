@@ -9,6 +9,7 @@ import json
 from unittest.mock import MagicMock, patch
 
 from app.core.tools.enrolment_tools import (
+    USER_PROFILE_NOT_FOUND_MESSAGE,
     _check_secure_settings_eligibility,
     _check_user_eligibility,
     _criteria_group_matches,
@@ -194,7 +195,7 @@ class TestGetUserEligibilityProfile:
         result = json.loads(get_user_eligibility_profile.func("user@x.com"))
 
         assert result["found"] is False
-        assert result["message"] == "User profile not found."
+        assert result["message"] == USER_PROFILE_NOT_FOUND_MESSAGE
 
     @patch("app.core.tools.enrolment_tools.requests.post")
     def test_exception_is_handled(self, mock_post):
@@ -449,7 +450,7 @@ class TestGetMdoAdmin:
         result = json.loads(get_mdo_admin.func("nobody@x.com"))
 
         assert result["found"] is False
-        assert result["message"] == "User profile not found."
+        assert result["message"] == USER_PROFILE_NOT_FOUND_MESSAGE
 
     @patch("app.core.tools.enrolment_tools.requests.post")
     def test_root_org_id_missing(self, mock_post):

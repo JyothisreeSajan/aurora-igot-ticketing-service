@@ -37,6 +37,8 @@ _HEADERS_JSON = {
     "Content-Type": "application/json",
 }
 
+USER_PROFILE_NOT_FOUND_MESSAGE = "User profile not found."
+
 
 # ── Internal helpers ────────────────────────────────────────────────────────────
 
@@ -168,10 +170,10 @@ def get_user_eligibility_profile(email: str) -> str:
     try:
         user = _fetch_user_record(email)
         if not user or not user.get("id"):
-            return json.dumps({"found": False, "message": "User profile not found."})
+            return json.dumps({"found": False, "message": USER_PROFILE_NOT_FOUND_MESSAGE})
         payload = _build_eligibility_ctx(user["id"])
         if not payload:
-            return json.dumps({"found": False, "message": "User profile not found."})
+            return json.dumps({"found": False, "message": USER_PROFILE_NOT_FOUND_MESSAGE})
         return json.dumps({"found": True, **payload})
     except Exception as e:
         logger.error(f"[enrolment_tools] get_user_eligibility_profile error: {e}")
@@ -335,7 +337,7 @@ def get_mdo_admin(email: str) -> str:
     try:
         user = _fetch_user_record(email)
         if not user or not user.get("id"):
-            return json.dumps({"found": False, "message": "User profile not found."})
+            return json.dumps({"found": False, "message": USER_PROFILE_NOT_FOUND_MESSAGE})
 
         root_org_id = user.get("rootOrgId")
         if not root_org_id:
