@@ -865,6 +865,36 @@ def check_mother_tongue_available(mother_tongue_name: str) -> str:
         return json.dumps({"query": mother_tongue_name, "found": False, "error": str(e)})
 
 
+# ── Shared helper — SOP-P7 / SOP-P12 own-profile lookup by email ────────────
+# Both SOPs below need nothing but "look this user up by email, and if
+# anything goes wrong return a ready-to-use error response" before doing
+# their own, unrelated field extraction — factored out to avoid duplicating
+# that fetch/error-handling shape between them.
+
+def _fetch_own_profile_or_error(email: str) -> tuple[dict | None, str | None]:
+    """Look up a user by email via the User Search API.
+
+    Returns (user_dict, None) on success, or (None, json_error_string) if the
+    user wasn't found or the API call failed — callers return that error
+    string directly.
+    """
+    url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
+    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
+    try:
+        payload = {"request": {"filters": {"email": email}}}
+        resp = requests.post(url, json=payload, headers=headers, timeout=10)
+        resp.raise_for_status()
+        content = resp.json().get("result", {}).get("response", {}).get("content", [])
+        if not content:
+            return None, json.dumps({"found": False, "message": USER_PROFILE_NOT_FOUND_MESSAGE,
+                                      "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email}})
+        return content[0], None
+    except Exception as e:
+        logger.error(f"[profile_user_management_tools] _fetch_own_profile_or_error error: {e}")
+        return None, json.dumps({"found": False, "error": str(e),
+                                  "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email}})
+
+
 # ── SOP-P7 — Date of Retirement Update ───────────────────────────────────────
 
 @tool
@@ -880,35 +910,22 @@ def get_user_ehrms_details(email: str) -> str:
       EHRMS ID             -> profileDetails.additionalProperties.externalSystemId
       External System Name -> profileDetails.additionalProperties.externalSystem
     """
-    url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
-    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
-    try:
-        payload = {"request": {"filters": {"email": email}}}
-        resp = requests.post(url, json=payload, headers=headers, timeout=10)
-        resp.raise_for_status()
-        content = resp.json().get("result", {}).get("response", {}).get("content", [])
+    user, error = _fetch_own_profile_or_error(email)
+    if error:
+        return error
 
-        if not content:
-            return json.dumps({"found": False, "message": USER_PROFILE_NOT_FOUND_MESSAGE,
-                                "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email}})
+    additional_properties = (user.get("profileDetails") or {}).get("additionalProperties") or {}
+    external_system_id = additional_properties.get("externalSystemId")
+    external_system_name = additional_properties.get("externalSystem")
 
-        user = content[0]
-        additional_properties = (user.get("profileDetails") or {}).get("additionalProperties") or {}
-        external_system_id = additional_properties.get("externalSystemId")
-        external_system_name = additional_properties.get("externalSystem")
-
-        return json.dumps({
-            "email": USER_EMAIL_PLACEHOLDER,
-            "found": True,
-            "ehrms_id_set": bool(external_system_id),
-            "external_system_id": external_system_id,
-            "external_system_name": external_system_name,
-            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
-        })
-    except Exception as e:
-        logger.error(f"[profile_user_management_tools] get_user_ehrms_details error: {e}")
-        return json.dumps({"found": False, "error": str(e),
-                            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email}})
+    return json.dumps({
+        "email": USER_EMAIL_PLACEHOLDER,
+        "found": True,
+        "ehrms_id_set": bool(external_system_id),
+        "external_system_id": external_system_id,
+        "external_system_name": external_system_name,
+        "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
+    })
 
 
 # ── SOP-P12 — Profile Completion Not Showing 100% ───────────────────────────
@@ -930,37 +947,24 @@ def get_profile_completion_details(email: str) -> str:
       Group          -> profileDetails.professionalDetails[0].group
       Designation    -> profileDetails.professionalDetails[0].designation
     """
-    url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
-    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
-    try:
-        payload = {"request": {"filters": {"email": email}}}
-        resp = requests.post(url, json=payload, headers=headers, timeout=10)
-        resp.raise_for_status()
-        content = resp.json().get("result", {}).get("response", {}).get("content", [])
+    user, error = _fetch_own_profile_or_error(email)
+    if error:
+        return error
 
-        if not content:
-            return json.dumps({"found": False, "message": USER_PROFILE_NOT_FOUND_MESSAGE,
-                                "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email}})
+    profile_details = user.get("profileDetails") or {}
+    prof_list = profile_details.get("professionalDetails")
+    prof_details = prof_list[0] if isinstance(prof_list, list) and prof_list else {}
 
-        user = content[0]
-        profile_details = user.get("profileDetails") or {}
-        prof_list = profile_details.get("professionalDetails")
-        prof_details = prof_list[0] if isinstance(prof_list, list) and prof_list else {}
-
-        return json.dumps({
-            "email": USER_EMAIL_PLACEHOLDER,
-            "found": True,
-            "firstName": user.get("firstName"),
-            "mandatory_fields_exists": bool(profile_details.get("mandatoryFieldsExists")),
-            "profile_photo_set": bool(profile_details.get("profileImageUrl")),
-            "group": prof_details.get("group") or None,
-            "designation": prof_details.get("designation") or None,
-            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
-        })
-    except Exception as e:
-        logger.error(f"[profile_user_management_tools] get_profile_completion_details error: {e}")
-        return json.dumps({"found": False, "error": str(e),
-                            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email}})
+    return json.dumps({
+        "email": USER_EMAIL_PLACEHOLDER,
+        "found": True,
+        "firstName": user.get("firstName"),
+        "mandatory_fields_exists": bool(profile_details.get("mandatoryFieldsExists")),
+        "profile_photo_set": bool(profile_details.get("profileImageUrl")),
+        "group": prof_details.get("group") or None,
+        "designation": prof_details.get("designation") or None,
+        "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
+    })
 
 
 # ── Convenience list for the subgraph ─────────────────────────────────────────
