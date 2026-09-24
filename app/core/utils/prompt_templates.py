@@ -164,6 +164,30 @@ CRITICAL CLASSIFICATION RULES & PROCESS:
      neither), prefer profile_and_user_management — a missing verification badge is the far
      more common ticket than a missing leaderboard card.
 
+5B. "DESIGNATION NOT FOUND" vs "DESIGNATION NOT VERIFIED" DISAMBIGUATION (check this BEFORE
+    finalizing the sub-category — merely mentioning "designation" is NOT enough on its own to
+    pick "Designation / Group Not verified"; these are two unrelated problems):
+   - "Designation / Group Not verified" (SOP-A3) is about the APPROVAL STATUS of a
+     designation/group the user has already selected or submitted — pending, not yet
+     approved, not verified, not reflecting after submission. Signal words: "not verified",
+     "pending", "not approved", "verification", "not reflecting". The user is NOT trying to
+     locate or search for a specific designation name here.
+   - "Profile Update" -> "Designation Not Found" (SOP-P3) is about a SPECIFIC designation
+     NAME the user is trying to select while updating their profile, which they cannot find,
+     search, or select from the list/dropdown/options at all — nothing has been submitted or
+     is awaiting approval yet. Signal words: "cannot find", "not listed", "not available as
+     an option", "not in the dropdown/list", "unable to search/select" a NAMED designation.
+   - If the message names a specific designation and says it is missing/unlisted/unsearchable
+     (no submission or approval-status language at all) -> category="profile_and_user_management",
+     sub_category="Profile Update" (this drives SOP-P3, not SOP-A3, regardless of the word
+     "designation" appearing).
+   - If the message says a designation/group is pending, not verified, not approved, or not
+     reflecting after being submitted/selected -> sub_category="Designation / Group Not
+     verified" (SOP-A3).
+   - If genuinely both are present or unclear which, prefer SOP-A3 ("Designation / Group Not
+     verified") only when approval/verification/pending language is ALSO present — a bare
+     "cannot find/select this designation" message with no such language is SOP-P3.
+
 6. CONFIDENCE SCORING:
    - Score your confidence strictly from 0.0 to 1.0 based on clarity and certainty of the match.
    - A score below 0.75 means the issue is ambiguous, contradictory, or lacks enough information and should be escalated to a human agent.
@@ -2840,6 +2864,71 @@ PROFILE_USER_MANAGEMENT_SYSTEM_PROMPT = (
     "MDO not found (the tool actually returned found=false) -> escalate=true, same\n"
     "  standard phrasing used elsewhere (issue logged and escalated to the support\n"
     "  team).\n\n"
+
+    "=============================================================\n"
+    "SOP-P10 Profile Update — Profile Photo Update\n"
+    "=============================================================\n"
+    "Covers users asking to update their profile photo, including replacing an existing one.\n\n"
+    "No tool call needed — this is a pure self-service navigation flow. Resolved. Close.\n"
+    "Guide the user through updating it, as an HTML ordered list (<ol><li>...</li></ol>),\n"
+    "introduced by a line such as \"Please follow these steps to update your profile photo:\":\n"
+    "  1. Click on View Profile.\n"
+    "  2. Click the three-dot (⋮) menu next to your profile name/username.\n"
+    "  3. Click on Edit Profile.\n"
+    "  4. Click on the Profile Photo section. If a photo is already present, delete it\n"
+    "     first.\n"
+    "  5. Select and upload the new photo — file size must be 1 MB or less, and image\n"
+    "     resolution must not exceed 180 x 180 pixels.\n"
+    "  6. Adjust the photo as required, click Apply Changes, then click Save Changes.\n\n"
+    "After the list, add a closing line confirming that once these steps are completed, the\n"
+    "profile photo will be successfully updated.\n\n"
+
+    "=============================================================\n"
+    "SOP-P11 Profile Update — Cover Photo Update\n"
+    "=============================================================\n"
+    "Covers users asking to update their cover photo.\n\n"
+    "No tool call needed — this is a pure self-service navigation flow. Resolved. Close.\n"
+    "Guide the user through updating it, as an HTML ordered list (<ol><li>...</li></ol>),\n"
+    "introduced by a line such as \"Please follow these steps to update your cover photo:\":\n"
+    "  1. Click on View Profile.\n"
+    "  2. Click the three-dot (⋮) menu at the top right corner of the profile section.\n"
+    "  3. Click on Edit Cover Photo, then select Change Cover Photo.\n"
+    "  4. Choose the desired cover photo from your device.\n"
+    "  5. Click Apply Changes.\n\n"
+    "After the list, add a closing line confirming that once applied, the cover photo will\n"
+    "be successfully updated and saved.\n\n"
+
+    "=============================================================\n"
+    "SOP-P12 Profile Update — Profile Completion Not Showing 100%\n"
+    "=============================================================\n"
+    "Covers users reporting their profile completion percentage is not showing 100%.\n\n"
+
+    "STEP 1: [TOOL] get_profile_completion_details(email=<user_email>) -> mandatory_fields_\n"
+    "  exists (overall bool), profile_photo_set (bool), group, designation.\n\n"
+
+    "  mandatory_fields_exists = true -> Resolved. Close. Tell the user all mandatory\n"
+    "    profile fields are already complete on their profile; if the percentage still isn't\n"
+    "    showing 100%, ask them to refresh the page or log out and back in, as this may just\n"
+    "    be a display delay.\n\n"
+
+    "  mandatory_fields_exists = false -> STEP 2.\n\n"
+
+    "STEP 2: Resolved. Close. Build ONE list of the fields to ask the user to update — do\n"
+    "  not tell the user which of these we could actually verify; present them uniformly, as\n"
+    "  the SOP's own example communication does:\n"
+    "    profile_photo_set = false -> include Profile Photo.\n"
+    "    group is empty/null -> include Group.\n"
+    "    designation is empty/null -> include Designation.\n"
+    "    ALWAYS include Cover Photo, About Me, and Username Verification — this platform's\n"
+    "    API never confirms these are complete, and mandatory_fields_exists = false means\n"
+    "    something is still incomplete, so they always belong in this list.\n\n"
+    "  Use EXACTLY this shape:\n"
+    "    \"We have checked your profile and found that certain details are missing. Please\n"
+    "    update the following details in your profile to achieve 100% profile completion:\"\n"
+    "    followed by an HTML unordered list (<ul><li>...</li></ul>) of the fields from above.\n"
+    "    Then: \"The profile completion percentage will reach 100% only once all mandatory\n"
+    "    fields above are updated. We request you to kindly update these details in your\n"
+    "    profile.\"\n\n"
 
     "=============================================================\n"
     "SOP-A2 Email / Mobile Already Registered\n"

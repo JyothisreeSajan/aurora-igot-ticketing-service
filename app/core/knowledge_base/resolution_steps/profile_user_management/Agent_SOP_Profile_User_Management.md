@@ -33,6 +33,7 @@ Verification, Designation/Group, and Profile Update Use Cases
 | `get_enrollment_summary` | `(user_id)` | Enrollment counts (In-Progress/Completed) for the OTHER account already linked to the new contact — internal escalation-note use only (SOP-A2 STEP 4.1) |
 | `check_mother_tongue_available` | `(mother_tongue_name)` | Checks a user-reported mother tongue against the platform's master language list, case-insensitive exact match (SOP-P5 STEP 1) |
 | `get_user_ehrms_details` | `(email)` | Checks whether the user's EHRMS ID / External System ID is set on their profile (SOP-P7 STEP 1) |
+| `get_profile_completion_details` | `(email)` | Checks `mandatoryFieldsExists` (overall bool) plus Profile Photo/Group/Designation individually — Cover Photo, About Me, and Username Verification are not exposed by this API at all (SOP-P12 STEP 1) |
 
 ---
 ---
@@ -297,6 +298,58 @@ No tool call needed — pure self-service navigation. Resolved. Close. Guide the
 
 Closing: confirm that once these steps are completed, the Educational Qualification will
 be successfully added to the user's profile.
+
+# SOP-P10: Profile Update — Profile Photo Update
+
+Use Case: user wants to update their profile photo, including replacing an existing one.
+
+No tool call needed — pure self-service navigation. Resolved. Close. Guide the user:
+1. Click on View Profile.
+2. Click the three-dot (⋮) menu next to your profile name/username.
+3. Click on Edit Profile.
+4. Click on the Profile Photo section. If a photo is already present, delete it first.
+5. Select and upload the new photo — file size ≤ 1 MB, resolution not exceeding 180×180
+   pixels.
+6. Adjust the photo as required, click Apply Changes, then Save Changes.
+
+Closing: confirm that once these steps are completed, the profile photo will be
+successfully updated.
+
+# SOP-P11: Profile Update — Cover Photo Update
+
+Use Case: user wants to update their cover photo.
+
+No tool call needed — pure self-service navigation. Resolved. Close. Guide the user:
+1. Click on View Profile.
+2. Click the three-dot (⋮) menu at the top right corner of the profile section.
+3. Click on Edit Cover Photo, then select Change Cover Photo.
+4. Choose the desired cover photo from your device.
+5. Click Apply Changes.
+
+Closing: confirm that once applied, the cover photo will be successfully updated and saved.
+
+# SOP-P12: Profile Update — Profile Completion Not Showing 100%
+
+Use Case: user reports their profile completion percentage is not showing 100%.
+
+**STEP 1.** `get_profile_completion_details(email)` -> `mandatory_fields_exists` (overall
+bool), `profile_photo_set`, `group`, `designation`. Cover Photo, About Me, and Username
+Verification status are NOT exposed by this API at all — there is no field for them.
+
+- `mandatory_fields_exists = true` → Resolved. Close — tell the user all mandatory fields
+  are already complete; if the percentage still isn't showing 100%, ask them to
+  refresh/re-login, as it may just be a display delay.
+- `mandatory_fields_exists = false` → STEP 2.
+
+**STEP 2.** Resolved. Close — build ONE unified list, presented the same way regardless of
+what we could actually verify (never tell the user which fields we could or couldn't
+check): `profile_photo_set = false` → Profile Photo; empty `group` → Group; empty
+`designation` → Designation; and ALWAYS include Cover Photo, About Me, and Username
+Verification (never confirmed complete by this API, and `mandatory_fields_exists = false`
+means something is still incomplete). Use the SOP's own example communication verbatim —
+"We have checked your profile and found that certain details are missing. Please update the
+following details in your profile to achieve 100% profile completion:" followed by the
+list, then explain the percentage reaches 100% only once every mandatory field is updated.
 
 ---
 
