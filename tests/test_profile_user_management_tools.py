@@ -16,6 +16,7 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from app.core.tools import profile_user_management_tools as put
 from app.core.tools.profile_user_management_tools import (
@@ -24,6 +25,7 @@ from app.core.tools.profile_user_management_tools import (
     get_enrollment_summary,
     get_mdo_details_by_org_id,
     get_org_imported_designations,
+    get_profile_completion_details,
     get_profile_user_management_tools,
     get_user_ehrms_details,
     get_user_root_org_id,
@@ -331,6 +333,77 @@ class TestSearchDesignation:
         assert "error" in result
 
 
+# ── SOP-P3 STEP 1 — _fetch_all_designations retry/TTL hardening ────────────
+# Added for the production ~20,743-designation scale, where a single page can
+# intermittently time out or come back with a null body (the classic
+# max_result_window signature past record #10,000).
+
+class TestFetchAllDesignationsRetryAndCaching:
+    def test_ttl_is_one_day(self):
+        assert put._DESIGNATION_CACHE_TTL_SECONDS == 3600 * 24
+
+    @patch("app.core.tools.profile_user_management_tools.requests.post")
+    def test_page_retries_after_timeout_then_succeeds(self, mock_post):
+        data = [{"id": "d1", "designation": "Section Officer"}]
+        mock_post.side_effect = [
+            requests.exceptions.Timeout("read timed out"),
+            _designation_page_response(data, len(data)),
+        ]
+
+        result = json.loads(search_designation.func("Section Officer"))
+
+        assert result["match_type"] == "exact"
+        assert result["designation"]["id"] == "d1"
+        assert mock_post.call_count == 2
+
+    @patch("app.core.tools.profile_user_management_tools.requests.post")
+    def test_null_body_page_is_retried_then_succeeds(self, mock_post):
+        data = [{"id": "d1", "designation": "Section Officer"}]
+        mock_post.side_effect = [
+            _mock_response({"result": {"result": None}}),  # 200 OK, empty body — the
+                                                             # production 10k-wall signature
+            _designation_page_response(data, len(data)),
+        ]
+
+        result = json.loads(search_designation.func("Section Officer"))
+
+        assert result["match_type"] == "exact"
+        assert mock_post.call_count == 2
+
+    @patch("app.core.tools.profile_user_management_tools.requests.post")
+    def test_page_stops_gracefully_after_exhausting_retries(self, mock_post):
+        # Page 1 succeeds with 100 of 150 total; page 2 fails all 3 attempts —
+        # the fetch must stop cleanly with page 1's data rather than crash the
+        # whole tool call, since production has ~200+ pages and one bad page
+        # shouldn't take down the entire designation check.
+        page1 = [{"id": f"d{i}", "designation": f"Designation {i}"} for i in range(100)]
+        mock_post.side_effect = [
+            _designation_page_response(page1, 150),
+            requests.exceptions.Timeout("read timed out"),
+            requests.exceptions.Timeout("read timed out"),
+            requests.exceptions.Timeout("read timed out"),
+        ]
+
+        result = json.loads(search_designation.func("Designation 5"))
+
+        assert result["match_type"] == "exact"
+        assert result["designation"]["id"] == "d5"
+        assert mock_post.call_count == 4  # 1 (page 1) + 3 (page 2 retries)
+
+    @patch("app.core.tools.profile_user_management_tools.requests.post")
+    def test_first_page_exhausting_retries_yields_not_found_not_error(self, mock_post):
+        # A total fetch failure on the very first page currently surfaces as
+        # an empty designation list — search_designation still resolves,
+        # match_type="not_found" (which SOP-P3 safely escalates to a human),
+        # not a raised exception.
+        mock_post.side_effect = [requests.exceptions.Timeout("read timed out")] * 3
+
+        result = json.loads(search_designation.func("Section Officer"))
+
+        assert result["match_type"] == "not_found"
+        assert mock_post.call_count == 3
+
+
 # ── SOP-P3 STEP 2 — get_user_root_org_id ────────────────────────────────────
 
 class TestGetUserRootOrgId:
@@ -612,6 +685,67 @@ class TestGetUserEhrmsDetails:
         assert "error" in result
 
 
+# ── SOP-P12 STEP 1 — get_profile_completion_details ─────────────────────────
+
+class TestGetProfileCompletionDetails:
+    @patch("app.core.tools.profile_user_management_tools.requests.post")
+    def test_user_not_found(self, mock_post):
+        mock_post.return_value = _search_response([])
+
+        result = json.loads(get_profile_completion_details.func("nobody@x.com"))
+
+        assert result["found"] is False
+
+    @patch("app.core.tools.profile_user_management_tools.requests.post")
+    def test_mandatory_fields_complete(self, mock_post):
+        user = {
+            "firstName": "Asha",
+            "profileDetails": {
+                "mandatoryFieldsExists": True,
+                "profileImageUrl": "https://example.com/photo.png",
+                "professionalDetails": [{"group": "Group A", "designation": "Section Officer"}],
+            },
+        }
+        mock_post.return_value = _search_response([user])
+
+        result = json.loads(get_profile_completion_details.func("asha@x.com"))
+
+        assert result["found"] is True
+        assert result["mandatory_fields_exists"] is True
+        assert result["profile_photo_set"] is True
+        assert result["group"] == "Group A"
+        assert result["designation"] == "Section Officer"
+
+    @patch("app.core.tools.profile_user_management_tools.requests.post")
+    def test_mandatory_fields_incomplete_reports_which_are_missing(self, mock_post):
+        user = {
+            "firstName": "Ravi",
+            "profileDetails": {
+                "mandatoryFieldsExists": False,
+                "profileImageUrl": None,
+                "professionalDetails": [{"group": None, "designation": None}],
+            },
+        }
+        mock_post.return_value = _search_response([user])
+
+        result = json.loads(get_profile_completion_details.func("ravi@x.com"))
+
+        assert result["found"] is True
+        assert result["mandatory_fields_exists"] is False
+        assert result["profile_photo_set"] is False
+        assert result["group"] is None
+        assert result["designation"] is None
+
+    @patch("app.core.tools.profile_user_management_tools.requests.post")
+    def test_exception_is_handled(self, mock_post):
+        mock_post.side_effect = Exception("timeout")
+
+        result = json.loads(get_profile_completion_details.func("err@x.com"))
+
+        assert result["found"] is False
+        assert "error" in result
+
+
 # ── Convenience list ─────────────────────────────────────────────────────────
 
 class TestGetProfileUserManagementTools:
@@ -637,4 +771,5 @@ class TestGetProfileUserManagementTools:
             "get_department_mdo_admin",
             "check_mother_tongue_available",
             "get_user_ehrms_details",
+            "get_profile_completion_details",
         }

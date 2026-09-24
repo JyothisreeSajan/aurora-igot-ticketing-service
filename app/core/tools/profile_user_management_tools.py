@@ -42,6 +42,13 @@ Covers SOP workflows from Agent_SOP_Profile_User_Management.md:
           get_user_ehrms_details -> EHRMS ID set or not; if not, MDO then
                                      YP/SPOC fallback
 
+  SOP-P12 Profile Update - Profile Completion Not Showing 100%
+          get_profile_completion_details -> STEP 1 mandatory_fields_exists
+                                     overall flag, plus Profile Photo/Group/
+                                     Designation individually (Cover Photo,
+                                     About Me, Username tick are not exposed
+                                     by this API at all)
+
   SOP-P8  Profile Update - Service History Update
           get_own_profile_details (alias get_user_profile) -> STEP 1 current
                                      rootOrgName/designation vs. what the user
@@ -460,10 +467,11 @@ def get_department_mdo_admin(department_name: str) -> str:
 
 # ── SOP-P3 STEP 1 — verify the designation against master data ─────────────
 
-
-
 _DESIGNATION_CACHE: dict = {"data": None, "fetched_at": None}
-_DESIGNATION_CACHE_TTL_SECONDS = 3600
+_DESIGNATION_CACHE_TTL_SECONDS = 3600 * 24  # 1 day — designation master data changes
+                                             # rarely (weeks/months), so the
+                                             # slow full paginated fetch only
+                                             # needs to happen once a day.
 
 
 def _fetch_all_designations() -> list[dict]:
@@ -488,6 +496,9 @@ def _fetch_all_designations() -> list[dict]:
     page_size = 100  # confirmed API max — pageSize > 100 returns HTTP 400
     page_number = 1
     total_count = None
+    max_retries = 3  # production has ~200+ pages to fetch; one slow/timed-out
+                      # or malformed page shouldn't fail the entire list —
+                      # retry that single page a few times first.
 
     while total_count is None or len(all_designations) < total_count:
         payload = {
@@ -496,9 +507,35 @@ def _fetch_all_designations() -> list[dict]:
             "filterCriteriaMap": {"status": "Active"},
             "requestedFields": ["id", "designation"],
         }
-        resp = requests.post(url, json=payload, headers=headers, timeout=15)
-        resp.raise_for_status()
-        inner = resp.json().get("result", {}).get("result", {})
+        for attempt in range(1, max_retries + 1):
+            try:
+                resp = requests.post(url, json=payload, headers=headers, timeout=15)
+                resp.raise_for_status()
+                inner = resp.json().get("result", {}).get("result")
+                if inner is None:
+                    # HTTP 200 but a null body — this is the production 10k-wall
+                    # signature (or a transient hiccup below that point). Retrying
+                    # won't get past the wall, but it's cheap insurance against a
+                    # genuine transient blip, and either way we stop cleanly once
+                    # retries are exhausted rather than crashing the whole fetch.
+                    raise ValueError("designation search returned an empty/null result body")
+                break
+            except (requests.exceptions.RequestException, ValueError) as e:
+                if attempt == max_retries:
+                    logger.warning(
+                        f"[profile_user_management_tools] designation page {page_number} "
+                        f"failed after {max_retries} attempts ({e}) — stopping with "
+                        f"{len(all_designations)} designations fetched so far."
+                    )
+                    total_count = len(all_designations)
+                    inner = None
+                    break
+                logger.warning(
+                    f"[profile_user_management_tools] designation page {page_number} "
+                    f"attempt {attempt} failed ({e}), retrying..."
+                )
+        if inner is None:
+            break
         page_data = inner.get("data", [])
         total_count = inner.get("totalCount", len(page_data))
         if not page_data:
@@ -515,19 +552,23 @@ def _fetch_all_designations() -> list[dict]:
 @tool
 def search_designation(designation_name: str) -> str:
     """Verify a user-reported designation against the platform's full active
-    designation master data (cached in-memory for 1 hour — this API has no
+    designation master data (cached in-memory for 1 day — this API has no
     server-side name search, so it fetches everything, paginated, once per
     cache window, and matches locally).
 
-    Used in SOP-P3 STEP 1. Matching is conservative and done here, not left to
-    the caller: an exact (case-insensitive, whitespace-normalized) match is a
-    single confident hit; anything else that plausibly overlaps by whole word
-    is returned as an ambiguous candidate list — never a loose substring guess
-    (e.g. "sec officer" must not silently match "Secretary Officer" when
-    "Section Officer" was meant).
+    Used in SOP-P3 STEP 1. Matching is done here, not left to the caller: a
+    literal (case-insensitive, whitespace-normalized) match is exact; failing
+    that, word-PREFIX matching (e.g. "sec" matches "Section" but never
+    matches merely appearing inside "Secretary") finds plausible candidates —
+    a single candidate is treated as the confident match too, and 2+ is
+    ambiguous, never a loose substring guess.
 
-    Returns match_type: "exact" (one confident match), "ambiguous" (2+
-    plausible candidates, the user must confirm which), or "not_found".
+    Returns match_type: "exact" (a literal match, or exactly one plausible
+    word-prefix candidate), "ambiguous" (2+ plausible candidates, the user
+    must confirm which), or "not_found" (also returned, safely, if the
+    designation falls past this endpoint's ~10,000 record production limit —
+    SOP-P3 escalates "not_found" to a human rather than ever telling the user
+    their designation doesn't exist).
     """
     try:
         all_designations = _fetch_all_designations()
@@ -824,6 +865,36 @@ def check_mother_tongue_available(mother_tongue_name: str) -> str:
         return json.dumps({"query": mother_tongue_name, "found": False, "error": str(e)})
 
 
+# ── Shared helper — SOP-P7 / SOP-P12 own-profile lookup by email ────────────
+# Both SOPs below need nothing but "look this user up by email, and if
+# anything goes wrong return a ready-to-use error response" before doing
+# their own, unrelated field extraction — factored out to avoid duplicating
+# that fetch/error-handling shape between them.
+
+def _fetch_own_profile_or_error(email: str) -> tuple[dict | None, str | None]:
+    """Look up a user by email via the User Search API.
+
+    Returns (user_dict, None) on success, or (None, json_error_string) if the
+    user wasn't found or the API call failed — callers return that error
+    string directly.
+    """
+    url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
+    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
+    try:
+        payload = {"request": {"filters": {"email": email}}}
+        resp = requests.post(url, json=payload, headers=headers, timeout=10)
+        resp.raise_for_status()
+        content = resp.json().get("result", {}).get("response", {}).get("content", [])
+        if not content:
+            return None, json.dumps({"found": False, "message": USER_PROFILE_NOT_FOUND_MESSAGE,
+                                      "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email}})
+        return content[0], None
+    except Exception as e:
+        logger.error(f"[profile_user_management_tools] _fetch_own_profile_or_error error: {e}")
+        return None, json.dumps({"found": False, "error": str(e),
+                                  "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email}})
+
+
 # ── SOP-P7 — Date of Retirement Update ───────────────────────────────────────
 
 @tool
@@ -839,35 +910,61 @@ def get_user_ehrms_details(email: str) -> str:
       EHRMS ID             -> profileDetails.additionalProperties.externalSystemId
       External System Name -> profileDetails.additionalProperties.externalSystem
     """
-    url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
-    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": "application/json"}
-    try:
-        payload = {"request": {"filters": {"email": email}}}
-        resp = requests.post(url, json=payload, headers=headers, timeout=10)
-        resp.raise_for_status()
-        content = resp.json().get("result", {}).get("response", {}).get("content", [])
+    user, error = _fetch_own_profile_or_error(email)
+    if error:
+        return error
 
-        if not content:
-            return json.dumps({"found": False, "message": USER_PROFILE_NOT_FOUND_MESSAGE,
-                                "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email}})
+    additional_properties = (user.get("profileDetails") or {}).get("additionalProperties") or {}
+    external_system_id = additional_properties.get("externalSystemId")
+    external_system_name = additional_properties.get("externalSystem")
 
-        user = content[0]
-        additional_properties = (user.get("profileDetails") or {}).get("additionalProperties") or {}
-        external_system_id = additional_properties.get("externalSystemId")
-        external_system_name = additional_properties.get("externalSystem")
+    return json.dumps({
+        "email": USER_EMAIL_PLACEHOLDER,
+        "found": True,
+        "ehrms_id_set": bool(external_system_id),
+        "external_system_id": external_system_id,
+        "external_system_name": external_system_name,
+        "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
+    })
 
-        return json.dumps({
-            "email": USER_EMAIL_PLACEHOLDER,
-            "found": True,
-            "ehrms_id_set": bool(external_system_id),
-            "external_system_id": external_system_id,
-            "external_system_name": external_system_name,
-            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
-        })
-    except Exception as e:
-        logger.error(f"[profile_user_management_tools] get_user_ehrms_details error: {e}")
-        return json.dumps({"found": False, "error": str(e),
-                            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email}})
+
+# ── SOP-P12 — Profile Completion Not Showing 100% ───────────────────────────
+
+@tool
+def get_profile_completion_details(email: str) -> str:
+    """Check which mandatory profile fields are set, for a user reporting their
+    profile completion isn't showing 100%.
+
+    Used in SOP-P12 STEP 1. The User Search API exposes an overall
+    `mandatoryFieldsExists` flag (true = every mandatory field the platform
+    tracks is complete) plus three fields we can check individually — Profile
+    Photo, Group, and Designation. Cover Photo, About Me, and the Username
+    Verification tick are NOT exposed anywhere in this API's response (confirmed
+    via live UAT inspection) — there is no field for them to check.
+
+    Field mapping (confirmed via live UAT inspection):
+      Profile Photo  -> profileDetails.profileImageUrl (present = set)
+      Group          -> profileDetails.professionalDetails[0].group
+      Designation    -> profileDetails.professionalDetails[0].designation
+    """
+    user, error = _fetch_own_profile_or_error(email)
+    if error:
+        return error
+
+    profile_details = user.get("profileDetails") or {}
+    prof_list = profile_details.get("professionalDetails")
+    prof_details = prof_list[0] if isinstance(prof_list, list) and prof_list else {}
+
+    return json.dumps({
+        "email": USER_EMAIL_PLACEHOLDER,
+        "found": True,
+        "firstName": user.get("firstName"),
+        "mandatory_fields_exists": bool(profile_details.get("mandatoryFieldsExists")),
+        "profile_photo_set": bool(profile_details.get("profileImageUrl")),
+        "group": prof_details.get("group") or None,
+        "designation": prof_details.get("designation") or None,
+        "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
+    })
 
 
 # ── Convenience list for the subgraph ─────────────────────────────────────────
@@ -882,19 +979,18 @@ def get_profile_user_management_tools() -> list:
         get_mdo_details_by_org_id,          # SOP-A1 STEP 2, SOP-P6/P7/P8
         search_organization,                # SOP-A1 Edge Case 2 (exact name), SOP-P8 STEP 2
         search_organization_under_ministry_or_state,  # SOP-A1 Edge Case 2 (Ministry/State + org)
-        get_yp_am_details,                  # SOP-A1 STEP 3 / Edge Case 2 YP/SPOC fallback, SOP-P3 Case 2, SOP-A2 fallback, SOP-P7 fallback
-        get_yp_am_details,                  # SOP-A1 STEP 3 / Edge Case 2 YP/SPOC fallback, SOP-P3 Case 2, SOP-A2 fallback, SOP-A3 YP Fallback
+        get_yp_am_details,                  # SOP-A1 STEP 3 / Edge Case 2 YP/SPOC fallback, SOP-P3 Case 2, SOP-A2 fallback, SOP-P7 fallback, SOP-A3 YP Fallback
         search_designation,                 # SOP-P3 STEP 1
         get_user_root_org_id,               # SOP-P3 STEP 2, SOP-P6/P7
         get_org_imported_designations,      # SOP-P3 STEP 2
         get_own_profile_details,            # SOP-A2 STEP 2A/3.1.1/3.2 — ticket owner's own org name / user id; SOP-P8 STEP 1
-        get_own_profile_details,            # SOP-A2 STEP 2A/3.1.1/3.2 — ticket owner's own org name / user id
         get_mdo_details,                    # SOP-A2 STEP 2A/3.1.1 — MDO for the ticket owner's own org
         validate_new_contact_domain,        # SOP-A2 STEP 2
         check_contact_registered,           # SOP-A2 STEP 3
         get_enrollment_summary,             # SOP-A2 STEP 4.1
         check_mother_tongue_available,      # SOP-P5 STEP 1
         get_user_ehrms_details,             # SOP-P7 STEP 1
+        get_profile_completion_details,     # SOP-P12 STEP 1
         get_profile_verification_request_details,  # SOP-A3 STEP 1
         get_department_mdo_admin,           # SOP-A3 STEP 2
     ]

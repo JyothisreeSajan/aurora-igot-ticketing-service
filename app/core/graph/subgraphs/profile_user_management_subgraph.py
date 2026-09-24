@@ -11,12 +11,14 @@ Categories handled (from CATEGORY_SUBCATEGORY_MAP → profile_and_user_managemen
                                               flow for accounts already linked elsewhere]
   - Profile Verification / Verified Badge   [not yet implemented — escalates]
   - Designation / Group Not verified        [not yet implemented — escalates]
-  - Profile Update                          [SOP-P1/P2/P3/P4/P5/P6/P7/P8/P9 implemented —
-                                              Name Update, Display Name Update, Designation
-                                              Not Found, Email/Mobile OTP Not Received,
-                                              Mother Tongue Update, EHRMS ID Update, Date of
-                                              Retirement Update, Service History Update,
-                                              Educational Qualification Update]
+  - Profile Update                          [SOP-P1..P12 implemented — Name Update, Display
+                                              Name Update, Designation Not Found, Email/
+                                              Mobile OTP Not Received, Mother Tongue Update,
+                                              EHRMS ID Update, Date of Retirement Update,
+                                              Service History Update, Educational
+                                              Qualification Update, Profile Photo Update,
+                                              Cover Photo Update, Profile Completion Not
+                                              Showing 100%]
   - Profile Verification / Verified Badge   [SOP-A3 implemented — same flow as
   - Designation / Group Not verified          Designation/Group below, wording branches on
                                               whether the ticket message says "badge" or
