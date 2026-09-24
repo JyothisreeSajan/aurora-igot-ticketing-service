@@ -21,6 +21,7 @@ ENABLED_CATEGORIES: list[str] = [
     "ca_apar_issue",
     "recognition_and_engagement",
     "profile_and_user_management",
+    "content_related_issue",
 ]
 
 # ── Email HTML Template ────────────────────────────────────────────────────────
