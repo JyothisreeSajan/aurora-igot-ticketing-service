@@ -881,7 +881,7 @@ def get_user_ehrms_details(email: str) -> str:
       External System Name -> profileDetails.additionalProperties.externalSystem
     """
     url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
-    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
     try:
         payload = {"request": {"filters": {"email": email}}}
         resp = requests.post(url, json=payload, headers=headers, timeout=10)
@@ -931,7 +931,7 @@ def get_profile_completion_details(email: str) -> str:
       Designation    -> profileDetails.professionalDetails[0].designation
     """
     url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
-    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
     try:
         payload = {"request": {"filters": {"email": email}}}
         resp = requests.post(url, json=payload, headers=headers, timeout=10)
