@@ -13,6 +13,8 @@ from app.core.tools.enrolment_tools import (
     _check_secure_settings_eligibility,
     _check_user_eligibility,
     _criteria_group_matches,
+    _parse_created_on,
+    _select_best_content_match,
     check_course_or_event_access,
     get_enrolment_tools,
     get_mdo_admin,
@@ -207,6 +209,104 @@ class TestGetUserEligibilityProfile:
         assert "error" in result
 
 
+# ── _parse_created_on ─────────────────────────────────────────────────────────
+
+class TestParseCreatedOn:
+    def test_valid_iso_string(self):
+        from datetime import datetime, timezone
+
+        assert _parse_created_on("2024-05-01T10:00:00+00:00") == datetime(2024, 5, 1, 10, 0, tzinfo=timezone.utc)
+
+    def test_none_sorts_last(self):
+        from datetime import datetime, timezone
+
+        assert _parse_created_on(None) == datetime.min.replace(tzinfo=timezone.utc)
+
+    def test_empty_string_sorts_last(self):
+        from datetime import datetime, timezone
+
+        assert _parse_created_on("") == datetime.min.replace(tzinfo=timezone.utc)
+
+    def test_unparseable_string_sorts_last(self):
+        from datetime import datetime, timezone
+
+        assert _parse_created_on("not-a-date") == datetime.min.replace(tzinfo=timezone.utc)
+
+
+# ── _select_best_content_match ───────────────────────────────────────────────
+
+class TestSelectBestContentMatch:
+    def test_empty_content_returns_none(self):
+        assert _select_best_content_match([], "Intro Course") is None
+
+    def test_single_result_returned(self):
+        content = [{"identifier": "c1", "name": "Intro Course", "status": "Live"}]
+
+        assert _select_best_content_match(content, "Intro Course")["identifier"] == "c1"
+
+    def test_exact_title_match_preferred_over_partial(self):
+        content = [
+            {"identifier": "partial", "name": "Intro Course Advanced", "status": "Live",
+             "createdOn": "2024-06-01T00:00:00+00:00"},
+            {"identifier": "exact", "name": "Intro Course", "status": "Live",
+             "createdOn": "2020-01-01T00:00:00+00:00"},
+        ]
+
+        result = _select_best_content_match(content, "Intro Course")
+
+        assert result["identifier"] == "exact"
+
+    def test_case_and_whitespace_insensitive_exact_match(self):
+        content = [{"identifier": "c1", "name": "  Intro Course  ", "status": "Live"}]
+
+        result = _select_best_content_match(content, " intro course ")
+
+        assert result["identifier"] == "c1"
+
+    def test_prefers_live_over_retired_among_exact_matches(self):
+        content = [
+            {"identifier": "retired-new", "name": "Intro Course", "status": "Retired",
+             "createdOn": "2024-06-01T00:00:00+00:00"},
+            {"identifier": "live-old", "name": "Intro Course", "status": "Live",
+             "createdOn": "2020-01-01T00:00:00+00:00"},
+        ]
+
+        result = _select_best_content_match(content, "Intro Course")
+
+        assert result["identifier"] == "live-old"
+
+    def test_falls_back_to_most_recent_when_no_live_match(self):
+        content = [
+            {"identifier": "retired-old", "name": "Intro Course", "status": "Retired",
+             "createdOn": "2020-01-01T00:00:00+00:00"},
+            {"identifier": "retired-new", "name": "Intro Course", "status": "Retired",
+             "createdOn": "2024-06-01T00:00:00+00:00"},
+        ]
+
+        result = _select_best_content_match(content, "Intro Course")
+
+        assert result["identifier"] == "retired-new"
+
+    def test_no_exact_match_falls_back_to_all_candidates(self):
+        content = [{"identifier": "c1", "name": "Something Else Entirely", "status": "Live"}]
+
+        result = _select_best_content_match(content, "Intro Course")
+
+        assert result["identifier"] == "c1"
+
+    def test_most_recent_among_multiple_live_matches(self):
+        content = [
+            {"identifier": "live-old", "name": "Intro Course", "status": "Live",
+             "createdOn": "2020-01-01T00:00:00+00:00"},
+            {"identifier": "live-new", "name": "Intro Course", "status": "Live",
+             "createdOn": "2024-06-01T00:00:00+00:00"},
+        ]
+
+        result = _select_best_content_match(content, "Intro Course")
+
+        assert result["identifier"] == "live-new"
+
+
 # ── search_course_or_program ─────────────────────────────────────────────────
 
 class TestSearchCourseOrProgram:
@@ -309,6 +409,31 @@ class TestSearchCourseOrProgram:
         assert result["found"] is False
         assert "error" in result
 
+    @patch("app.core.tools.enrolment_tools.requests.get")
+    @patch("app.core.tools.enrolment_tools.requests.post")
+    def test_picks_live_record_over_stale_retired_duplicate(self, mock_post, mock_get):
+        """A stale Retired duplicate under the same title, created more recently
+        than the real Live record, must not shadow the Live one."""
+        course_search = _mock_response({
+            "result": {
+                "content": [
+                    {"identifier": "retired-new", "name": "Intro Course", "status": "Retired",
+                     "createdOn": "2024-06-01T00:00:00+00:00"},
+                    {"identifier": "live-old", "name": "Intro Course", "status": "Live",
+                     "createdOn": "2020-01-01T00:00:00+00:00"},
+                ],
+                "count": 2,
+            }
+        })
+        mock_post.side_effect = [_search_response([{"id": "user-1"}]), course_search]
+        mock_get.return_value = _profile_response()
+
+        result = json.loads(search_course_or_program.func("Intro Course", "user@x.com"))
+
+        assert result["found"] is True
+        assert result["course_id"] == "live-old"
+        assert result["status"] == "Live"
+
 
 # ── search_event ──────────────────────────────────────────────────────────────
 
@@ -343,6 +468,25 @@ class TestSearchEvent:
 
         assert result["found"] is False
         assert "error" in result
+
+    @patch("app.core.tools.enrolment_tools.requests.post")
+    def test_picks_exact_match_among_multiple_events(self, mock_post):
+        mock_post.return_value = _mock_response({
+            "result": {
+                "Event": [
+                    {"identifier": "e-other", "name": "Town Hall Follow-up", "status": "Live",
+                     "createdOn": "2024-06-01T00:00:00+00:00"},
+                    {"identifier": "e1", "name": "Town Hall", "status": "Live",
+                     "createdOn": "2020-01-01T00:00:00+00:00"},
+                ],
+                "count": 2,
+            }
+        })
+
+        result = json.loads(search_event.func("Town Hall", "user@x.com"))
+
+        assert result["found"] is True
+        assert result["event_id"] == "e1"
 
 
 # ── check_course_or_event_access ─────────────────────────────────────────────

@@ -22,6 +22,7 @@ and `check_secure_settings_eligibility` as fixed transforms, not free-form judge
 
 import json
 import logging
+from datetime import datetime, timezone
 
 import requests
 from langchain.tools import tool
@@ -141,6 +142,47 @@ def _check_user_eligibility(user_groups: list, ctx: dict) -> bool:
     )
 
 
+_EPOCH = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _parse_created_on(value: str | None) -> datetime:
+    """Parse an ISO createdOn timestamp; unparseable/missing values sort last."""
+    if not value:
+        return _EPOCH
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return _EPOCH
+
+
+def _select_best_content_match(content: list, query: str) -> dict | None:
+    """Pick the single most relevant record among search results for one
+    course/program/event name.
+
+    The composite search API returns independent content records, including
+    stale duplicates — e.g. a course retired years ago sitting alongside a
+    newer re-authored Draft or Live record under the same title, with no
+    'supersedes' link between them. Trusting the API's relevance ranking (or
+    raw createdOn-desc order) alone can surface the wrong one — an old
+    Retired record instead of the course's actual current state.
+
+    Narrows to exact title matches first (when any exist, since a partial-name
+    query may only loosely match everything returned), then prefers a Live
+    record among those, then falls back to the most recently created one.
+    """
+    if not content:
+        return None
+
+    normalized_query = query.strip().casefold()
+    exact_matches = [c for c in content if (c.get("name") or "").strip().casefold() == normalized_query]
+    candidates = exact_matches or content
+
+    live_matches = [c for c in candidates if c.get("status") == "Live"]
+    pool = live_matches or candidates
+
+    return max(pool, key=lambda c: _parse_created_on(c.get("createdOn")))
+
+
 def _check_secure_settings_eligibility(secure_settings, ctx: dict) -> bool:
     """Gate 1 (moderated-course metadata check). Not a dict -> not moderated -> eligible."""
     if not isinstance(secure_settings, dict):
@@ -191,9 +233,13 @@ def search_course_or_program(query: str, email: str) -> str:
     course-like categories than "Course"/"Program" alone (e.g. "Curated Program"),
     and filtering on it silently excludes live courses under those categories.
 
-    Only the single top-ranked match is evaluated for eligibility, even when
-    multiple results come back — if it's not what the user meant, ask them for
-    the exact course name and re-run.
+    Only a single match is evaluated for eligibility, even when multiple results
+    come back — if it's not what the user meant, ask them for the exact course
+    name and re-run. That match is chosen by exact-title match, preferring a
+    Live record, then falling back to the most recently created one — not
+    simply the API's top-ranked or most-recent-by-createdOn record, since a
+    stale Retired duplicate can otherwise outrank the course's real current
+    state (see _select_best_content_match).
 
     Returns: found, count, course_id, name, status, is_moderated, link, and
     (when status is LIVE) either 'metadata_eligible' (for moderated courses —
@@ -219,10 +265,10 @@ def search_course_or_program(query: str, email: str) -> str:
         content = data.get("result", {}).get("content", [])
         count = data.get("result", {}).get("count", len(content))
 
-        if not content or not content[0].get("name"):
+        top = _select_best_content_match(content, query)
+        if not top or not top.get("name"):
             return json.dumps({"found": False, "count": 0, "message": "No course/program found for this name."})
 
-        top = content[0]
         secure_settings = top.get("secureSettings")
         is_moderated = isinstance(secure_settings, dict)
 
@@ -271,10 +317,10 @@ def search_event(query: str, email: str) -> str:
         events = data.get("result", {}).get("Event", [])
         count = data.get("result", {}).get("count", len(events))
 
-        if not events or not events[0].get("name"):
+        top = _select_best_content_match(events, query)
+        if not top or not top.get("name"):
             return json.dumps({"found": False, "count": 0, "message": "No event found for this name."})
 
-        top = events[0]
         return json.dumps({
             "found":  True,
             "count":  count,
