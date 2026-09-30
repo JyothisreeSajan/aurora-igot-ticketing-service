@@ -9,7 +9,11 @@ Categories handled (from CATEGORY_SUBCATEGORY_MAP -> content_related_issue):
                                               event; SOP 2: request to unenroll/withdraw
                                               from an already-enrolled course, program, or
                                               event; see ENROLMENT_ISSUES_SYSTEM_PROMPT]
-  - Course / Program Progress Issue         [stub]
+  - Course / Program Progress Issue         [implemented — progress not updating
+                                              and certificate not generated, for
+                                              courses/programs (events out of
+                                              scope); see
+                                              COURSE_PROGRESS_SYSTEM_PROMPT]
   - Content / Resource Not Opening          [stub]
   - Event Related Issue                     [stub]
   - Certificate Issue                       [stub]
@@ -27,9 +31,11 @@ import logging
 
 from app.core.graph.state import TicketState
 from app.core.graph.subgraphs.base_subgraph import BaseSubgraph
+from app.core.tools.course_progress_tools import get_course_progress_tools
 from app.core.tools.enrolment_tools import get_enrolment_tools
 from app.core.tools.stub_tools import get_stub_tools
 from app.core.utils.prompt_templates import (
+    COURSE_PROGRESS_SYSTEM_PROMPT,
     ENROLMENT_ISSUES_SYSTEM_PROMPT,
     RATING_FEEDBACK_ISSUE_SYSTEM_PROMPT,
     STUB_SUBGRAPH_SYSTEM_PROMPT,
@@ -41,10 +47,12 @@ logger = logging.getLogger(__name__)
 # Any sub-category not listed here falls through to the generic stub.
 _SUB_CATEGORY_PROMPTS: dict[str, str] = {
     "enrolment_issues": ENROLMENT_ISSUES_SYSTEM_PROMPT,
+    "course_program_progress_issue": COURSE_PROGRESS_SYSTEM_PROMPT,
     "unable_to_submit_rating_feedback": RATING_FEEDBACK_ISSUE_SYSTEM_PROMPT,
 }
 _SUB_CATEGORY_TOOLS = {
     "enrolment_issues": get_enrolment_tools,
+    "course_program_progress_issue": get_course_progress_tools,
     "unable_to_submit_rating_feedback": lambda: [],  # no tool call needed for this SOP
 }
 
@@ -58,9 +66,7 @@ class ContentRelatedSubgraph(BaseSubgraph):
 
     def system_prompt(self, state: TicketState) -> str:
         sub_category = state.get("sub_category")
-        prompt = _SUB_CATEGORY_PROMPTS.get(sub_category)
-        if prompt is None:
-            prompt = STUB_SUBGRAPH_SYSTEM_PROMPT
+        prompt = _SUB_CATEGORY_PROMPTS.get(sub_category, STUB_SUBGRAPH_SYSTEM_PROMPT)
         return prompt.format(
             email=state.get("email", "unknown"),
             main_category=state.get("main_category", "content_related_issue"),

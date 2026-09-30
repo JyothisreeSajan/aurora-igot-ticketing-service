@@ -1,10 +1,10 @@
 """
 Unit tests for app/core/graph/subgraphs/content_related_subgraph.py —
-the dispatch between the implemented "enrolment_issues" sub-category
-(enrolment_tools / ENROLMENT_ISSUES_SYSTEM_PROMPT) and every other,
-still-stubbed, content_related_issue sub-category (stub_tools /
-STUB_SUBGRAPH_SYSTEM_PROMPT), plus the greeting-name extraction this
-subgraph adds on top of BaseSubgraph (same pattern as
+the dispatch between the implemented "enrolment_issues" and
+"course_program_progress_issue" sub-categories (their own tools/prompt
+modules) and every other, still-stubbed, content_related_issue sub-category
+(stub_tools / STUB_SUBGRAPH_SYSTEM_PROMPT), plus the greeting-name
+extraction this subgraph adds on top of BaseSubgraph (same pattern as
 ProfileUserManagementSubgraph / RecognitionEngagementSubgraph).
 """
 
@@ -12,9 +12,11 @@ import json
 from unittest.mock import patch
 
 from app.core.graph.subgraphs.content_related_subgraph import ContentRelatedSubgraph
+from app.core.tools.course_progress_tools import get_course_progress_tools
 from app.core.tools.enrolment_tools import get_enrolment_tools
 from app.core.tools.stub_tools import get_stub_tools
 from app.core.utils.prompt_templates import (
+    COURSE_PROGRESS_SYSTEM_PROMPT,
     ENROLMENT_ISSUES_SYSTEM_PROMPT,
     RATING_FEEDBACK_ISSUE_SYSTEM_PROMPT,
     STUB_SUBGRAPH_SYSTEM_PROMPT,
@@ -33,6 +35,11 @@ class TestIsImplemented:
 
         assert subgraph._is_implemented({"sub_category": "enrolment_issues"}) is True
 
+    def test_course_program_progress_issue_is_implemented(self):
+        subgraph = ContentRelatedSubgraph()
+
+        assert subgraph._is_implemented({"sub_category": "course_program_progress_issue"}) is True
+
     def test_rating_feedback_issue_is_implemented(self):
         subgraph = ContentRelatedSubgraph()
 
@@ -42,7 +49,6 @@ class TestIsImplemented:
         subgraph = ContentRelatedSubgraph()
 
         for sub_category in [
-            "course_program_progress_issue",
             "content_resource_not_opening",
             "event_related_issue",
             "certificate_issue",
@@ -66,6 +72,16 @@ class TestSystemPrompt:
         prompt = subgraph.system_prompt(state)
 
         assert prompt == ENROLMENT_ISSUES_SYSTEM_PROMPT.format(
+            email="unknown", main_category="content_related_issue"
+        )
+
+    def test_course_program_progress_issue_uses_dedicated_prompt(self):
+        subgraph = ContentRelatedSubgraph()
+        state = {"sub_category": "course_program_progress_issue", "main_category": "content_related_issue"}
+
+        prompt = subgraph.system_prompt(state)
+
+        assert prompt == COURSE_PROGRESS_SYSTEM_PROMPT.format(
             email="unknown", main_category="content_related_issue"
         )
 
@@ -108,6 +124,13 @@ class TestGetTools:
         tools = subgraph.get_tools({"sub_category": "enrolment_issues"})
 
         assert {t.name for t in tools} == {t.name for t in get_enrolment_tools()}
+
+    def test_course_program_progress_issue_returns_course_progress_tools(self):
+        subgraph = ContentRelatedSubgraph()
+
+        tools = subgraph.get_tools({"sub_category": "course_program_progress_issue"})
+
+        assert {t.name for t in tools} == {t.name for t in get_course_progress_tools()}
 
     def test_rating_feedback_issue_returns_no_tools(self):
         subgraph = ContentRelatedSubgraph()
