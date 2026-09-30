@@ -113,7 +113,7 @@ class TestSystemPrompt:
 
     def test_other_sub_category_uses_stub_prompt(self):
         subgraph = ContentRelatedSubgraph()
-        state = {"sub_category": "event_related_issue", "main_category": "content_related_issue"}
+        state = {"sub_category": "content_resource_not_opening", "main_category": "content_related_issue"}
 
         prompt = subgraph.system_prompt(state)
 
