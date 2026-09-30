@@ -41,9 +41,10 @@ _MIN_VIDEO_SECONDS = 60.0
 _MIN_TIME_SPENT_SECONDS = 600.0
 
 _YT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
-_ISO_DURATION_RE = re.compile(
-    r"^P(?:(?P<d>\d+)D)?(?:T(?:(?P<h>\d+)H)?(?:(?P<m>\d+)M)?(?:(?P<s>\d+(?:\.\d+)?)S)?)?$"
-)
+# ISO-8601 duration is matched in two smaller steps: the date part (days) and an
+# optional "T..." time part (hours / minutes / seconds).
+_ISO_DATE_RE = re.compile(r"^P(?:(?P<d>\d+)D)?(?:T(?P<time>.*))?$")
+_ISO_TIME_RE = re.compile(r"^(?:(?P<h>\d+)H)?(?:(?P<m>\d+)M)?(?:(?P<s>\d+(?:\.\d+)?)S)?$")
 
 
 # ── Internal helpers ────────────────────────────────────────────────────────────
@@ -134,10 +135,14 @@ def _iso8601_duration_to_seconds(value: str | None) -> float | None:
     """'PT45S' -> 45.0, 'PT1H2M3S' -> 3723.0. None if unparseable."""
     if not value:
         return None
-    m = _ISO_DURATION_RE.match(value)
-    if not m:
+    date_match = _ISO_DATE_RE.match(value)
+    if not date_match:
         return None
-    parts = {k: float(v) for k, v in m.groupdict().items() if v}
+    time_match = _ISO_TIME_RE.match(date_match.group("time") or "")
+    if not time_match:
+        return None
+    groups = {"d": date_match.group("d"), **time_match.groupdict()}
+    parts = {k: float(v) for k, v in groups.items() if v}
     return parts.get("d", 0) * 86400 + parts.get("h", 0) * 3600 + parts.get("m", 0) * 60 + parts.get("s", 0)
 
 
