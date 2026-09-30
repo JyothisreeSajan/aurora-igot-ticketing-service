@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     IGOT_KEY: str | None = None
     IGOT_API_HOST_URL: str = "https://portal.uat.karmayogibharat.net"
 
+    # YouTube Data API (event video duration check)
+    GOOGLE_YOUTUBE_API_BASE_URL: str | None = None
+    GOOGLE_YOUTUBE_API_KEY: str | None = None
+
     # Zoho API Settings
     ZOHO_CLIENT_ID: str | None = None
     ZOHO_CLIENT_SECRET: str | None = None
@@ -74,6 +78,8 @@ ELASTICSEARCH_BOT_INTERACTION_INDEX = settings.ELASTICSEARCH_BOT_INTERACTION_IND
 ELASTICSEARCH_LOGS_INDEX = settings.ELASTICSEARCH_LOGS_INDEX
 IGOT_KEY = settings.IGOT_KEY
 IGOT_API_HOST_URL = settings.IGOT_API_HOST_URL
+GOOGLE_YOUTUBE_API_BASE_URL = settings.GOOGLE_YOUTUBE_API_BASE_URL
+GOOGLE_YOUTUBE_API_KEY = settings.GOOGLE_YOUTUBE_API_KEY
 ZOHO_CLIENT_ID = settings.ZOHO_CLIENT_ID
 ZOHO_CLIENT_SECRET = settings.ZOHO_CLIENT_SECRET
 ZOHO_REFRESH_TOKEN = settings.ZOHO_REFRESH_TOKEN
