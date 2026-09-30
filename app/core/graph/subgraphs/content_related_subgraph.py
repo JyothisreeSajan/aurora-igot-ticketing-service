@@ -9,10 +9,11 @@ Categories handled (from CATEGORY_SUBCATEGORY_MAP -> content_related_issue):
                                               event; SOP 2: request to unenroll/withdraw
                                               from an already-enrolled course, program, or
                                               event; see ENROLMENT_ISSUES_SYSTEM_PROMPT]
-  - Course / Program Progress Issue         [implemented — progress not updating
-                                              and certificate not generated, for
-                                              courses/programs (events out of
-                                              scope); see
+  - Course / Program Progress Issue         [implemented — progress not updating,
+                                              for courses/programs (events out of
+                                              scope); certificate-not-generated is
+                                              NOT handled here — see Certificate Not
+                                              Received below; see
                                               COURSE_PROGRESS_SYSTEM_PROMPT]
   - Content / Resource Not Opening          [stub]
   - Event Related Issue                     [implemented — event video missing / not
@@ -24,6 +25,12 @@ Categories handled (from CATEGORY_SUBCATEGORY_MAP -> content_related_issue):
                                               re-download, and if still wrong, guides a
                                               profile-name update + re-download; see
                                               CERTIFICATE_NAME_ISSUE_SYSTEM_PROMPT]
+  - Certificate Not Received / Generated    [implemented — UC-03, courses and programs:
+                                              certificate not received/generated; guides
+                                              download once available (issued, or completed
+                                              >24h ago), or asks the user to wait if within
+                                              24h of completion; see
+                                              CERTIFICATE_NOT_RECEIVED_SYSTEM_PROMPT]
   - Unable to submit rating/feedback        [implemented — no tool call; explains progress-
                                               update delay and that rating isn't required for
                                               certificate generation; see
@@ -38,13 +45,14 @@ import logging
 
 from app.core.graph.state import TicketState
 from app.core.graph.subgraphs.base_subgraph import BaseSubgraph
-from app.core.tools.certificate_tools import get_user_details
+from app.core.tools.certificate_tools import get_certificate_not_received_tools, get_user_details
 from app.core.tools.course_progress_tools import get_course_progress_tools
 from app.core.tools.enrolment_tools import get_enrolment_tools
 from app.core.tools.event_tools import get_event_tools
 from app.core.tools.stub_tools import get_stub_tools
 from app.core.utils.prompt_templates import (
     CERTIFICATE_NAME_ISSUE_SYSTEM_PROMPT,
+    CERTIFICATE_NOT_RECEIVED_SYSTEM_PROMPT,
     COURSE_PROGRESS_SYSTEM_PROMPT,
     ENROLMENT_ISSUES_SYSTEM_PROMPT,
     EVENT_ISSUES_SYSTEM_PROMPT,
@@ -62,6 +70,7 @@ _SUB_CATEGORY_PROMPTS: dict[str, str] = {
     "event_related_issue": EVENT_ISSUES_SYSTEM_PROMPT,
     "unable_to_submit_rating_feedback": RATING_FEEDBACK_ISSUE_SYSTEM_PROMPT,
     "certificate_issue": CERTIFICATE_NAME_ISSUE_SYSTEM_PROMPT,
+    "certificate_not_received": CERTIFICATE_NOT_RECEIVED_SYSTEM_PROMPT,
 }
 _SUB_CATEGORY_TOOLS = {
     "enrolment_issues": get_enrolment_tools,
@@ -69,6 +78,7 @@ _SUB_CATEGORY_TOOLS = {
     "event_related_issue": get_event_tools,
     "unable_to_submit_rating_feedback": lambda: [],  # no tool call needed for this SOP
     "certificate_issue": lambda: [get_user_details],
+    "certificate_not_received": get_certificate_not_received_tools,
 }
 
 
