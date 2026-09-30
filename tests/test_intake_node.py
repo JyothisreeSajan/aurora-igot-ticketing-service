@@ -185,7 +185,8 @@ def test_intake_node_validate_email_true_checks_registration():
         new_state = intake_node(state)
         mock_fetch_user.assert_called_once_with("unregistered@gov.in")
         assert new_state["is_resolved"] is True
-        assert "unable to find an account" in new_state["final_response"].lower()
+        assert new_state["final_response"] == ""
+        assert new_state["main_category"] == "general"
 
 
 def test_intake_node_validate_email_false_skips_registration_check():
