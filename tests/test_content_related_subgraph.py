@@ -16,6 +16,7 @@ from app.core.tools.course_progress_tools import get_course_progress_tools
 from app.core.tools.enrolment_tools import get_enrolment_tools
 from app.core.tools.stub_tools import get_stub_tools
 from app.core.utils.prompt_templates import (
+    CERTIFICATE_NAME_ISSUE_SYSTEM_PROMPT,
     COURSE_PROGRESS_SYSTEM_PROMPT,
     ENROLMENT_ISSUES_SYSTEM_PROMPT,
     RATING_FEEDBACK_ISSUE_SYSTEM_PROMPT,
@@ -45,13 +46,17 @@ class TestIsImplemented:
 
         assert subgraph._is_implemented({"sub_category": "unable_to_submit_rating_feedback"}) is True
 
+    def test_certificate_issue_is_implemented(self):
+        subgraph = ContentRelatedSubgraph()
+
+        assert subgraph._is_implemented({"sub_category": "certificate_issue"}) is True
+
     def test_other_sub_categories_are_stubbed(self):
         subgraph = ContentRelatedSubgraph()
 
         for sub_category in [
             "content_resource_not_opening",
             "event_related_issue",
-            "certificate_issue",
             "",
         ]:
             assert subgraph._is_implemented({"sub_category": sub_category}) is False
@@ -95,9 +100,19 @@ class TestSystemPrompt:
             email="unknown", main_category="content_related_issue"
         )
 
-    def test_other_sub_category_uses_stub_prompt(self):
+    def test_certificate_issue_uses_dedicated_prompt(self):
         subgraph = ContentRelatedSubgraph()
         state = {"sub_category": "certificate_issue", "main_category": "content_related_issue"}
+
+        prompt = subgraph.system_prompt(state)
+
+        assert prompt == CERTIFICATE_NAME_ISSUE_SYSTEM_PROMPT.format(
+            email="unknown", main_category="content_related_issue"
+        )
+
+    def test_other_sub_category_uses_stub_prompt(self):
+        subgraph = ContentRelatedSubgraph()
+        state = {"sub_category": "event_related_issue", "main_category": "content_related_issue"}
 
         prompt = subgraph.system_prompt(state)
 
@@ -139,6 +154,13 @@ class TestGetTools:
 
         assert tools == []
 
+    def test_certificate_issue_returns_get_user_details_only(self):
+        subgraph = ContentRelatedSubgraph()
+
+        tools = subgraph.get_tools({"sub_category": "certificate_issue"})
+
+        assert [t.name for t in tools] == ["get_user_details"]
+
     def test_other_sub_category_returns_stub_tools(self):
         subgraph = ContentRelatedSubgraph()
 
@@ -162,6 +184,12 @@ class TestExtractFirstName:
         tool_results = [_tool_result("get_user_eligibility_profile", {"found": True, "first_name": "Meera"})]
 
         assert subgraph._extract_first_name(tool_results) == "Meera"
+
+    def test_found_via_get_user_details_camel_case(self):
+        subgraph = ContentRelatedSubgraph()
+        tool_results = [_tool_result("get_user_details", {"firstName": "Bharath"})]
+
+        assert subgraph._extract_first_name(tool_results) == "Bharath"
 
     def test_ignores_unrelated_tools(self):
         subgraph = ContentRelatedSubgraph()

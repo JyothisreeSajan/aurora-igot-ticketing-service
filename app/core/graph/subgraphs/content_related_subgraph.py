@@ -16,7 +16,11 @@ Categories handled (from CATEGORY_SUBCATEGORY_MAP -> content_related_issue):
                                               COURSE_PROGRESS_SYSTEM_PROMPT]
   - Content / Resource Not Opening          [stub]
   - Event Related Issue                     [stub]
-  - Certificate Issue                       [stub]
+  - Certificate Issue                       [implemented — Incorrect Name on Certificate:
+                                              fetches the profile's on-file name, guides a
+                                              re-download, and if still wrong, guides a
+                                              profile-name update + re-download; see
+                                              CERTIFICATE_NAME_ISSUE_SYSTEM_PROMPT]
   - Unable to submit rating/feedback        [implemented — no tool call; explains progress-
                                               update delay and that rating isn't required for
                                               certificate generation; see
@@ -31,10 +35,12 @@ import logging
 
 from app.core.graph.state import TicketState
 from app.core.graph.subgraphs.base_subgraph import BaseSubgraph
+from app.core.tools.certificate_tools import get_user_details
 from app.core.tools.course_progress_tools import get_course_progress_tools
 from app.core.tools.enrolment_tools import get_enrolment_tools
 from app.core.tools.stub_tools import get_stub_tools
 from app.core.utils.prompt_templates import (
+    CERTIFICATE_NAME_ISSUE_SYSTEM_PROMPT,
     COURSE_PROGRESS_SYSTEM_PROMPT,
     ENROLMENT_ISSUES_SYSTEM_PROMPT,
     RATING_FEEDBACK_ISSUE_SYSTEM_PROMPT,
@@ -49,11 +55,13 @@ _SUB_CATEGORY_PROMPTS: dict[str, str] = {
     "enrolment_issues": ENROLMENT_ISSUES_SYSTEM_PROMPT,
     "course_program_progress_issue": COURSE_PROGRESS_SYSTEM_PROMPT,
     "unable_to_submit_rating_feedback": RATING_FEEDBACK_ISSUE_SYSTEM_PROMPT,
+    "certificate_issue": CERTIFICATE_NAME_ISSUE_SYSTEM_PROMPT,
 }
 _SUB_CATEGORY_TOOLS = {
     "enrolment_issues": get_enrolment_tools,
     "course_program_progress_issue": get_course_progress_tools,
     "unable_to_submit_rating_feedback": lambda: [],  # no tool call needed for this SOP
+    "certificate_issue": lambda: [get_user_details],
 }
 
 
@@ -87,15 +95,17 @@ class ContentRelatedSubgraph(BaseSubgraph):
             result = {**result, "user_first_name": first_name}
         return result
 
+    _NAME_SOURCE_TOOLS = ("get_user_eligibility_profile", "get_user_details")
+
     def _extract_first_name(self, tool_results: list) -> str | None:
         for r in reversed(tool_results):
-            if r.get("tool") != "get_user_eligibility_profile":
+            if r.get("tool") not in self._NAME_SOURCE_TOOLS:
                 continue
             try:
                 data = json.loads(r["summary"])
             except Exception:
                 continue
-            first_name = data.get("first_name")
+            first_name = data.get("first_name") or data.get("firstName")
             if first_name:
                 return first_name
         return None
