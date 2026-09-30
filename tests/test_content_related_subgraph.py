@@ -12,12 +12,14 @@ import json
 from unittest.mock import patch
 
 from app.core.graph.subgraphs.content_related_subgraph import ContentRelatedSubgraph
+from app.core.tools.certificate_tools import get_certificate_not_received_tools
 from app.core.tools.course_progress_tools import get_course_progress_tools
 from app.core.tools.enrolment_tools import get_enrolment_tools
 from app.core.tools.event_tools import get_event_tools
 from app.core.tools.stub_tools import get_stub_tools
 from app.core.utils.prompt_templates import (
     CERTIFICATE_NAME_ISSUE_SYSTEM_PROMPT,
+    CERTIFICATE_NOT_RECEIVED_SYSTEM_PROMPT,
     COURSE_PROGRESS_SYSTEM_PROMPT,
     ENROLMENT_ISSUES_SYSTEM_PROMPT,
     EVENT_ISSUES_SYSTEM_PROMPT,
@@ -52,6 +54,11 @@ class TestIsImplemented:
         subgraph = ContentRelatedSubgraph()
 
         assert subgraph._is_implemented({"sub_category": "certificate_issue"}) is True
+
+    def test_certificate_not_received_is_implemented(self):
+        subgraph = ContentRelatedSubgraph()
+
+        assert subgraph._is_implemented({"sub_category": "certificate_not_received"}) is True
 
     def test_other_sub_categories_are_stubbed(self):
         subgraph = ContentRelatedSubgraph()
@@ -111,6 +118,16 @@ class TestSystemPrompt:
             email="unknown", main_category="content_related_issue"
         )
 
+    def test_certificate_not_received_uses_dedicated_prompt(self):
+        subgraph = ContentRelatedSubgraph()
+        state = {"sub_category": "certificate_not_received", "main_category": "content_related_issue"}
+
+        prompt = subgraph.system_prompt(state)
+
+        assert prompt == CERTIFICATE_NOT_RECEIVED_SYSTEM_PROMPT.format(
+            email="unknown", main_category="content_related_issue"
+        )
+
     def test_other_sub_category_uses_stub_prompt(self):
         subgraph = ContentRelatedSubgraph()
         state = {"sub_category": "content_resource_not_opening", "main_category": "content_related_issue"}
@@ -161,6 +178,13 @@ class TestGetTools:
         tools = subgraph.get_tools({"sub_category": "certificate_issue"})
 
         assert [t.name for t in tools] == ["get_user_details"]
+
+    def test_certificate_not_received_returns_certificate_not_received_tools(self):
+        subgraph = ContentRelatedSubgraph()
+
+        tools = subgraph.get_tools({"sub_category": "certificate_not_received"})
+
+        assert {t.name for t in tools} == {t.name for t in get_certificate_not_received_tools()}
 
     def test_other_sub_category_returns_stub_tools(self):
         subgraph = ContentRelatedSubgraph()
