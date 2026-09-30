@@ -31,6 +31,11 @@ from app.core.utils.config import IGOT_API_HOST_URL, IGOT_KEY
 
 logger = logging.getLogger(__name__)
 
+_HEADERS_JSON = {
+    "Authorization": f"Bearer {IGOT_KEY}",
+    "Content-Type": "application/json",
+}
+
 # ── Shared field filter for enrollment responses ───────────────────────────────
 
 ENROLLMENT_FIELDS = [
@@ -62,13 +67,9 @@ def _get_latest_enrollments(
 ) -> dict:
     """Internal helper: fetch and filter enrollment list by user_id."""
     url = f"{IGOT_API_HOST_URL}/api/course/private/v4/user/enrollment/list/{user_id}"
-    headers = {
-        "Authorization": f"Bearer {IGOT_KEY}",
-        "Content-Type": "application/json",
-    }
     payload = {"request": {"status": status}}
 
-    response = requests.post(url, headers=headers, json=payload, timeout=10)
+    response = requests.post(url, headers=_HEADERS_JSON, json=payload, timeout=10)
     response.raise_for_status()
     full_response = response.json()
 
@@ -107,13 +108,9 @@ def get_user_enrollments(email: str, status_filter: str | None = None) -> str:
     try:
         # Resolve email → user_id
         url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
-        headers = {
-            "Authorization": f"Bearer {IGOT_KEY}",
-            "Content-Type": "application/json",
-        }
         payload = {"request": {"filters": {"email": email}}}
 
-        search_resp = requests.post(url, json=payload, headers=headers, timeout=10)
+        search_resp = requests.post(url, json=payload, headers=_HEADERS_JSON, timeout=10)
         search_resp.raise_for_status()
         search_data = search_resp.json()
         content = search_data.get("result", {}).get("response", {}).get("content", [])
@@ -163,8 +160,7 @@ def _flatten_lang_content_status(lang_content_status: dict) -> dict:
 def _fetch_content(content_id: str) -> dict:
     """GET /api/extended/content/v1/read/{content_id} -> result.content."""
     url = f"{IGOT_API_HOST_URL}/api/extended/content/v1/read/{content_id}"
-    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": "application/json"}
-    resp = requests.get(url, headers=headers, timeout=10)
+    resp = requests.get(url, headers=_HEADERS_JSON, timeout=10)
     resp.raise_for_status()
     return resp.json().get("result", {}).get("content", {}) or {}
 
@@ -175,7 +171,6 @@ _SCORM_MIME_TYPE = "application/vnd.ekstep.html-archive"
 def _fetch_composite_metadata(identifiers: list) -> list:
     """POST /api/composite/v4/search -> content[] metadata (name, mimeType) for pending resources."""
     url = f"{IGOT_API_HOST_URL}/api/composite/v4/search"
-    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": "application/json"}
     payload = {
         "request": {
             "filters": {"identifier": identifiers, "status": ["Live", "Review", "Draft", "Retired"]},
@@ -186,7 +181,7 @@ def _fetch_composite_metadata(identifiers: list) -> list:
             "limit": 1000,
         }
     }
-    resp = requests.post(url, json=payload, headers=headers, timeout=10)
+    resp = requests.post(url, json=payload, headers=_HEADERS_JSON, timeout=10)
     resp.raise_for_status()
     return resp.json().get("result", {}).get("content", []) or []
 
@@ -270,10 +265,9 @@ def diagnose_certificate_receipt(course_id: str, email: str) -> str:
       "error"                 — something failed; treat as unknown, do not guess.
     """
     url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
-    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": "application/json"}
     payload = {"request": {"filters": {"email": email}}}
     try:
-        search_resp = requests.post(url, json=payload, headers=headers, timeout=10)
+        search_resp = requests.post(url, json=payload, headers=_HEADERS_JSON, timeout=10)
         search_resp.raise_for_status()
         content = search_resp.json().get("result", {}).get("response", {}).get("content", [])
         if not content or not content[0].get("id"):
@@ -282,7 +276,7 @@ def diagnose_certificate_receipt(course_id: str, email: str) -> str:
 
         enroll_url = f"{IGOT_API_HOST_URL}/api/course/private/v4/user/enrollment/list/{user_id}"
         enroll_payload = {"request": {"retiredCoursesEnabled": True, "status": ["In-Progress", "Completed"]}}
-        enroll_resp = requests.post(enroll_url, json=enroll_payload, headers=headers, timeout=10)
+        enroll_resp = requests.post(enroll_url, json=enroll_payload, headers=_HEADERS_JSON, timeout=10)
         enroll_resp.raise_for_status()
         courses = enroll_resp.json().get("result", {}).get("courses", []) or []
 
@@ -359,13 +353,9 @@ def get_user_details(email: str) -> str:
     that appears on all generated certificates.
     """
     url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
-    headers = {
-        "Authorization": f"Bearer {IGOT_KEY}",
-        "Content-Type": "application/json",
-    }
     payload = {"request": {"filters": {"email": email}}}
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=10)
+        response = requests.post(url, json=payload, headers=_HEADERS_JSON, timeout=10)
         response.raise_for_status()
         data = response.json()
         content = data.get("result", {}).get("response", {}).get("content", [])
