@@ -5,7 +5,8 @@ Tools for content_related_issue -> event_related_issue: event video missing,
 event video not playing, and event progress not updating.
 
 Built from the EVENT_RELATED_ISSUES API workflow (use cases 1-3; use case 4,
-event certificate not generated, is out of scope for this leaf).
+event certificate not generated, is served by diagnose_event_certificate, which
+is registered with the certificate_not_received leaf, not get_event_tools).
 
 Endpoints (IGOT_API_HOST_URL = https://portal.uat.karmayogibharat.net in UAT):
   POST /api/private/user/v1/search                — email -> user_id
@@ -350,6 +351,58 @@ def diagnose_event_progress(event_id: str, email: str) -> str:
         })
     except Exception as e:
         logger.error(f"[event_tools] diagnose_event_progress error: {e}")
+        return json.dumps({"status": "error", "error": str(e)})
+
+
+# ── Event certificate not generated (used by the certificate_not_received leaf) ─
+
+@tool
+def diagnose_event_certificate(event_id: str, email: str) -> str:
+    """Diagnose 'event certificate not received / not generated' for one enrolled event.
+    Call get_user_events first to find event_id — never guess it.
+
+    Returns status:
+      'in_progress'                - no certificate and time spent missing or under
+                                     600 seconds (event not yet completed; no ticket)
+      'certificate_available'      - certificate already issued; guide the download
+      'certificate_not_generated'  - time spent >= 600 seconds (or completion 100%) but no
+                                     certificate issued (technical issue; escalate)
+      'not_enrolled'               - event_id not in the user's enrolled events
+      'error'                      - lookup failed
+    Includes event_name, time_spent_seconds, completion_percentage.
+    """
+    try:
+        user_id = _fetch_user_id(email)
+        if not user_id:
+            return json.dumps({"status": "error", "message": USER_NOT_FOUND_MESSAGE})
+
+        item = _find_event(_fetch_events(user_id), event_id)
+        if not item:
+            return json.dumps({"status": "not_enrolled"})
+
+        time_spent = _extract_time_spent_seconds(item)
+        try:
+            completion = float(item.get("completionPercentage") or 0)
+        except (TypeError, ValueError):
+            completion = 0.0
+
+        # The issued certificate is the strongest signal; otherwise completion is judged
+        # by time spent (>= 600 s), with 100% completion accepted as the same evidence.
+        if _has_issued_certificates(item):
+            status = "certificate_available"
+        elif completion >= 100.0 or (time_spent is not None and time_spent >= _MIN_TIME_SPENT_SECONDS):
+            status = "certificate_not_generated"
+        else:
+            status = "in_progress"
+
+        return json.dumps({
+            "status": status,
+            "event_name": (item.get("event") or {}).get("name"),
+            "time_spent_seconds": time_spent,
+            "completion_percentage": completion,
+        })
+    except Exception as e:
+        logger.error(f"[event_tools] diagnose_event_certificate error: {e}")
         return json.dumps({"status": "error", "error": str(e)})
 
 

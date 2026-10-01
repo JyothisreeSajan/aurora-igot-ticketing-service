@@ -432,6 +432,9 @@ class TestDiagnoseCertificateReceipt:
 # ── get_certificate_not_received_tools ──────────────────────────────────────────
 
 class TestGetCertificateNotReceivedTools:
-    def test_returns_both_tools(self):
+    def test_returns_course_and_event_tools(self):
         tools = get_certificate_not_received_tools()
-        assert {t.name for t in tools} == {"get_user_enrollments", "diagnose_certificate_receipt"}
+        assert {t.name for t in tools} == {
+            "get_user_enrollments", "diagnose_certificate_receipt",
+            "get_user_events", "diagnose_event_certificate",
+        }

@@ -3,9 +3,9 @@ tools/certificate_tools.py
 ---------------------------
 Tools for two distinct content_related_issue sub-categories:
 
-  certificate_not_received (UC-03 Certificate Not Generated flow — courses
-  AND programs; events out of scope): a completed/in-progress course or
-  program's certificate has not been received/generated. Wording branches on
+  certificate_not_received (UC-03 Certificate Not Generated flow — courses,
+  programs AND events): a completed/in-progress course, program or event's
+  certificate has not been received/generated. Wording branches on
   primary_category ("course" vs "program") but the diagnosis logic is
   identical for both — no Hierarchy Read / Admin Content State cross-check
   needed for this flow.
@@ -14,6 +14,10 @@ Tools for two distinct content_related_issue sub-categories:
                                      completion / issuedCertificates / 24h
                                      timing, pending-resource + SCORM
                                      diagnosis)
+  Events take a separate branch (event_tools.py):
+    get_user_events               → EVENT STEP E1 (match the enrolled event)
+    diagnose_event_certificate    → EVENT STEP E2 (issuedCertificates /
+                                     time spent vs 600 s)
 
   certificate_issue (SOP-03): incorrect name on an already-generated
   certificate.
@@ -27,6 +31,7 @@ from datetime import datetime, timezone
 import requests
 from langchain.tools import tool
 
+from app.core.tools.event_tools import diagnose_event_certificate, get_user_events
 from app.core.utils.config import IGOT_API_HOST_URL, IGOT_KEY
 
 logger = logging.getLogger(__name__)
@@ -413,4 +418,6 @@ def get_certificate_not_received_tools() -> list:
     return [
         get_user_enrollments,          # STEP 2
         diagnose_certificate_receipt,  # STEPS 4-6
+        get_user_events,               # EVENT STEP E1
+        diagnose_event_certificate,    # EVENT STEP E2
     ]

@@ -18,15 +18,15 @@ Categories handled (from CATEGORY_SUBCATEGORY_MAP -> content_related_issue):
   - Content / Resource Not Opening          [stub]
   - Event Related Issue                     [implemented — event video missing / not
                                               playing / progress not updating (event
-                                              certificate out of scope); see
+                                              certificate: see Certificate Not Received); see
                                               EVENT_ISSUES_SYSTEM_PROMPT]
   - Certificate Issue                       [implemented — Incorrect Name on Certificate:
                                               fetches the profile's on-file name, guides a
                                               re-download, and if still wrong, guides a
                                               profile-name update + re-download; see
                                               CERTIFICATE_NAME_ISSUE_SYSTEM_PROMPT]
-  - Certificate Not Received / Generated    [implemented — UC-03, courses and programs:
-                                              certificate not received/generated; guides
+  - Certificate Not Received / Generated    [implemented — UC-03, courses, programs and
+                                              events: certificate not received/generated; guides
                                               download once available (issued, or completed
                                               >24h ago), or asks the user to wait if within
                                               24h of completion; see
