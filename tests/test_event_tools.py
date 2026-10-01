@@ -18,6 +18,7 @@ from app.core.tools.event_tools import (
     _iso8601_duration_to_seconds,
     check_event_video_config,
     check_event_video_duration,
+    diagnose_event_certificate,
     diagnose_event_progress,
     get_event_tools,
     get_user_events,
@@ -402,3 +403,64 @@ class TestDiagnoseProgressExtra:
         out = _run_progress(_event_item(name="Webinar", completion=40, time_spent=120))
         assert out == {"status": "in_progress", "event_name": "Webinar", "time_spent_seconds": 120.0,
                        "completion_percentage": 40.0, "certificate_issued": False}
+
+
+# ── diagnose_event_certificate (certificate_not_received event branch) ───────────
+
+_CERT_ARGS = {"event_id": "do_1", "email": "a@b.c"}
+
+
+def _run_cert(item=None, users=None, events=None):
+    """Run diagnose_event_certificate with mocked user search + events list."""
+    users = [{"id": "u1"}] if users is None else users
+    events = [item] if events is None else events
+    with patch.object(event_tools.requests, "post", return_value=_user(users)), \
+         patch.object(event_tools.requests, "get", return_value=_events(events)):
+        return json.loads(diagnose_event_certificate.invoke(_CERT_ARGS))
+
+
+class TestDiagnoseEventCertificate:
+    @pytest.mark.parametrize("kwargs,expected", [
+        ({"time_spent": 599}, "in_progress"),
+        ({"time_spent": 0}, "in_progress"),
+        ({}, "in_progress"),
+        ({"time_spent": 600}, "certificate_not_generated"),
+        ({"time_spent": 900}, "certificate_not_generated"),
+        ({"completion": 100}, "certificate_not_generated"),
+        ({"time_spent": 600, "certs": [{"id": "c1"}]}, "certificate_available"),
+        ({"time_spent": 10, "certs": [{"id": "c1"}]}, "certificate_available"),
+        ({"completion": "n/a", "time_spent": 700}, "certificate_not_generated"),
+        ({"completion": "n/a", "time_spent": 100}, "in_progress"),
+    ])
+    def test_status(self, kwargs, expected):
+        assert _run_cert(_event_item(**kwargs))["status"] == expected
+
+    def test_invalid_completion_treated_as_zero(self):
+        assert _run_cert(_event_item(completion="n/a"))["completion_percentage"] == 0.0
+
+    def test_time_spent_from_user_event_consumption_fallback(self):
+        item = _event_item()
+        item["userEventConsumption"] = [{"progressdetails": json.dumps({"duration": 650})}]
+        assert _run_cert(item)["status"] == "certificate_not_generated"
+
+    def test_not_enrolled(self):
+        assert _run_cert(_event_item(event_id="other"))["status"] == "not_enrolled"
+
+    def test_no_events_at_all_is_not_enrolled(self):
+        assert _run_cert(events=[])["status"] == "not_enrolled"
+
+    def test_user_not_found(self):
+        assert _run_cert(users=[]) == {"status": "error", "message": USER_NOT_FOUND_MESSAGE}
+
+    def test_lookup_error(self):
+        with patch.object(event_tools.requests, "post", side_effect=Exception("boom")):
+            out = json.loads(diagnose_event_certificate.invoke(_CERT_ARGS))
+        assert out == {"status": "error", "error": "boom"}
+
+    def test_response_fields(self):
+        out = _run_cert(_event_item(name="Webinar", completion=40, time_spent=120))
+        assert out == {"status": "in_progress", "event_name": "Webinar", "time_spent_seconds": 120.0,
+                       "completion_percentage": 40.0}
+
+    def test_not_part_of_event_issue_tools(self):
+        assert "diagnose_event_certificate" not in {t.name for t in get_event_tools()}

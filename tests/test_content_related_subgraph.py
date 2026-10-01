@@ -128,6 +128,20 @@ class TestSystemPrompt:
             email="unknown", main_category="content_related_issue"
         )
 
+    def test_certificate_not_received_prompt_covers_event_flow(self):
+        prompt = CERTIFICATE_NOT_RECEIVED_SYSTEM_PROMPT
+        for marker in ("EVENT FLOW", "STEP E1", "STEP E2", "E2-IN-PROGRESS", "E2-AVAILABLE", "E2-NOT-GENERATED"):
+            assert marker in prompt
+        assert "events are out of scope" not in prompt
+
+    def test_certificate_not_received_prompt_tools_are_all_registered(self):
+        subgraph = ContentRelatedSubgraph()
+        registered = {t.name for t in subgraph.get_tools({"sub_category": "certificate_not_received"})}
+        for tool_name in ("get_user_enrollments", "diagnose_certificate_receipt",
+                          "get_user_events", "diagnose_event_certificate"):
+            assert tool_name in CERTIFICATE_NOT_RECEIVED_SYSTEM_PROMPT
+            assert tool_name in registered
+
     def test_other_sub_category_uses_stub_prompt(self):
         subgraph = ContentRelatedSubgraph()
         state = {"sub_category": "content_resource_not_opening", "main_category": "content_related_issue"}
