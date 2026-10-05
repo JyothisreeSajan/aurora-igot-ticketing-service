@@ -33,6 +33,14 @@ import logging
 import requests
 from langchain.tools import tool
 
+from app.core.tools.course_progress_tools import (
+    _as_int,
+    _fetch_composite_metadata as _fetch_composite_metadata_base,
+    _fetch_content,
+    _fetch_enrollments,
+    _fetch_user_record,
+    _flatten_lang_content_status,
+)
 from app.core.utils.config import IGOT_API_HOST_URL, IGOT_KEY
 
 logger = logging.getLogger(__name__)
@@ -44,42 +52,12 @@ _HEADERS_JSON = {
 
 USER_NOT_FOUND_MESSAGE = "User profile not found."
 
+_RESOURCE_FIELDS = ["identifier", "name", "mimeType"]
+
 
 # ── Internal helpers ────────────────────────────────────────────────────────────
-
-def _fetch_user_record(email: str) -> dict | None:
-    """POST /api/private/user/v1/search by email -> first matching user record."""
-    url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
-    resp = requests.post(url, json={"request": {"filters": {"email": email}}}, headers=_HEADERS_JSON, timeout=10)
-    resp.raise_for_status()
-    content = resp.json().get("result", {}).get("response", {}).get("content", [])
-    return content[0] if content else None
-
-
-def _fetch_enrollments(user_id: str, status: list) -> list:
-    """POST enrollment/list/{user_id} -> courses[], filtered by status."""
-    url = f"{IGOT_API_HOST_URL}/api/course/private/v4/user/enrollment/list/{user_id}"
-    payload = {"request": {"retiredCoursesEnabled": True, "status": status}}
-    resp = requests.post(url, json=payload, headers=_HEADERS_JSON, timeout=10)
-    resp.raise_for_status()
-    return resp.json().get("result", {}).get("courses", []) or []
-
-
-def _as_int(value, default: int = 0) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _flatten_lang_content_status(lang_content_status: dict) -> dict:
-    """{lang: {resource_id: status}} -> {resource_id: max_status_across_langs}."""
-    flat: dict = {}
-    for _lang, resources in (lang_content_status or {}).items():
-        for rid, status in (resources or {}).items():
-            flat[rid] = max(flat.get(rid, 0), _as_int(status))
-    return flat
-
+# _fetch_user_record / _fetch_enrollments / _as_int / _flatten_lang_content_status
+# are identical to course_progress_tools.py and imported from there above.
 
 def _fetch_course_hierarchy(course_id: str) -> dict:
     """GET /api/content/v2/read/{course_id} -> result.content."""
@@ -90,28 +68,12 @@ def _fetch_course_hierarchy(course_id: str) -> dict:
 
 
 def _fetch_composite_metadata(identifiers: list) -> list:
-    """POST /api/composite/v4/search -> content[] metadata (name, mimeType)."""
-    url = f"{IGOT_API_HOST_URL}/api/composite/v4/search"
-    payload = {
-        "request": {
-            "filters": {"identifier": identifiers},
-            "isSecureSettingsDisabled": True,
-            "fields": ["identifier", "name", "mimeType"],
-            "limit": 1000,
-        }
-    }
-    resp = requests.post(url, json=payload, headers=_HEADERS_JSON, timeout=10)
-    resp.raise_for_status()
-    return resp.json().get("result", {}).get("content", []) or []
-
-
-def _fetch_content(content_id: str) -> dict:
-    """GET /api/extended/content/v1/read/{content_id} -> result.content.
-    Used for the STEP 3b missing-resource fallback (name/mimeType only)."""
-    url = f"{IGOT_API_HOST_URL}/api/extended/content/v1/read/{content_id}"
-    resp = requests.get(url, headers=_HEADERS_JSON, timeout=10)
-    resp.raise_for_status()
-    return resp.json().get("result", {}).get("content", {}) or {}
+    """POST /api/composite/v4/search -> content[] metadata (name, mimeType).
+    Thin wrapper over course_progress_tools._fetch_composite_metadata with this
+    flow's own (simpler) field list and no status filter/sort, per UC-04."""
+    return _fetch_composite_metadata_base(
+        identifiers, fields=_RESOURCE_FIELDS, filter_status=False, sort_by_created=False,
+    )
 
 
 def _fetch_content_urls(content_id: str) -> dict:

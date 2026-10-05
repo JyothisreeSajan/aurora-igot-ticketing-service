@@ -134,21 +134,33 @@ def _detect_technical_issue(lang_content_status: dict, admin_records: list) -> b
     return False
 
 
-def _fetch_composite_metadata(identifiers: list) -> list:
-    """POST /api/composite/v4/search -> content[] metadata for pending resources."""
+_COMPOSITE_FIELDS = ["identifier", "name", "mimeType", "status", "duration",
+                     "primaryCategory", "maxAttempts", "maxAssessmentRetakeAttempts"]
+
+
+def _fetch_composite_metadata(
+    identifiers: list,
+    fields: list = _COMPOSITE_FIELDS,
+    filter_status: bool = True,
+    sort_by_created: bool = True,
+) -> list:
+    """POST /api/composite/v4/search -> content[] metadata for the given resource ids.
+    Shared across course_progress_tools.py, certificate_tools.py, and
+    content_resource_tools.py — each passes its own `fields` subset."""
     url = f"{IGOT_API_HOST_URL}/api/composite/v4/search"
-    payload = {
-        "request": {
-            "filters": {"identifier": identifiers, "status": ["Live", "Review", "Draft", "Retired"]},
-            "isSecureSettingsDisabled": True,
-            "sort_by": {"createdOn": "desc"},
-            "fields": ["identifier", "name", "mimeType", "status", "duration",
-                       "primaryCategory", "maxAttempts", "maxAssessmentRetakeAttempts"],
-            "facets": ["status"],
-            "limit": 1000,
-        }
+    request_body = {
+        "filters": {"identifier": identifiers},
+        "isSecureSettingsDisabled": True,
+        "fields": fields,
+        "limit": 1000,
     }
-    resp = requests.post(url, json=payload, headers=_HEADERS_JSON, timeout=10)
+    if filter_status:
+        request_body["filters"]["status"] = ["Live", "Review", "Draft", "Retired"]
+        request_body["facets"] = ["status"]
+    if sort_by_created:
+        request_body["sort_by"] = {"createdOn": "desc"}
+
+    resp = requests.post(url, json={"request": request_body}, headers=_HEADERS_JSON, timeout=10)
     resp.raise_for_status()
     return resp.json().get("result", {}).get("content", []) or []
 
