@@ -1149,7 +1149,7 @@ PROFILE_UPDATE_SYSTEM_PROMPT = (
 )
 
 
-RECOGNITION_ENGAGEMENT_SYSTEM_PROMPT = (
+_RE_HEADER = (
     "You are a Recognition & Engagement Resolution Specialist for the iGOT Karmayogi platform.\n\n"
     "User Email: <EMAIL_ADDRESS>\n"
     "Assigned Category: {main_category}\n\n"
@@ -1173,6 +1173,9 @@ RECOGNITION_ENGAGEMENT_SYSTEM_PROMPT = (
     "- Single-pass diagnosis. Fetch all relevant data upfront and deliver one complete, informed response.\n"
     "- Be empathetic, concise, and professional in every response.\n\n"
 
+)
+
+RE_SOP_RE1 = (
     "=============================================================\n"
     "SOP-RE1 Karma Points Issue\n"
     "=============================================================\n"
@@ -1333,6 +1336,9 @@ RECOGNITION_ENGAGEMENT_SYSTEM_PROMPT = (
     "  Edge Case 3 (learner pathway)                     -> ticket (pending clarification)\n"
     "  Edge Case 4 (claim button)                        -> no ticket\n\n"
 
+)
+
+RE_SOP_RE2 = (
     "=============================================================\n"
     "SOP-RE2 Weekly Claps Issue\n"
     "=============================================================\n"
@@ -1392,6 +1398,9 @@ RECOGNITION_ENGAGEMENT_SYSTEM_PROMPT = (
     "  discrepancy (all 12 weeks >= 60 min)                 -> ticket\n"
     "  streak older than 12 weeks (surfaces as discrepancy) -> ticket\n\n"
 
+)
+
+RE_SOP_RE3 = (
     "=============================================================\n"
     "SOP-RE3 Learning Hours Issue - eHRMS\n"
     "=============================================================\n"
@@ -1453,6 +1462,9 @@ RECOGNITION_ENGAGEMENT_SYSTEM_PROMPT = (
     "  External System Name missing (eHRMS ID present), MDO found     -> no ticket\n"
     "  External System Name missing (eHRMS ID present), MDO not found -> ticket\n\n"
 
+)
+
+RE_SOP_RE4 = (
     "=============================================================\n"
     "SOP-RE4 Learning Hours Issue - Shiksha Path\n"
     "=============================================================\n"
@@ -1466,6 +1478,9 @@ RECOGNITION_ENGAGEMENT_SYSTEM_PROMPT = (
     "    requested to reach out directly to the DoT, CBDT team: aed4.training@incometax.gov.in.\n\n"
     "    Please feel free to contact us if you need any further assistance.\"\n\n"
 
+)
+
+RE_SOP_RE5 = (
     "=============================================================\n"
     "SOP-RE5 Learning Hours Issue - SPARROW / APAR\n"
     "=============================================================\n"
@@ -1597,6 +1612,9 @@ RECOGNITION_ENGAGEMENT_SYSTEM_PROMPT = (
     "  Incorrect profile detail, field identified from ticket        -> no ticket\n"
     "  Incorrect profile detail, field not identified                 -> needs_clarification\n\n"
 
+)
+
+RE_SOP_RE6 = (
     "=============================================================\n"
     "SOP-RE6 Leader Board Issue\n"
     "=============================================================\n"
@@ -1642,6 +1660,9 @@ RECOGNITION_ENGAGEMENT_SYSTEM_PROMPT = (
 
     "SOP-RE6 Ticket Rules: NO ticket for any scenario in this SOP.\n\n"
 
+)
+
+_RE_CONSTRAINTS = (
     "=============================================================\n"
     "CONSTRAINTS\n"
     "=============================================================\n"
@@ -1651,6 +1672,22 @@ RECOGNITION_ENGAGEMENT_SYSTEM_PROMPT = (
     "- Do NOT ask the user for information retrievable via tools.\n"
     "- Be empathetic, concise, and professional in every response.\n"
 )
+
+# Full multi-SOP prompt — fallback when code cannot pick a single SOP.
+RECOGNITION_ENGAGEMENT_SYSTEM_PROMPT = (
+    _RE_HEADER + RE_SOP_RE1 + RE_SOP_RE2 + RE_SOP_RE3 + RE_SOP_RE4
+    + RE_SOP_RE5 + RE_SOP_RE6 + _RE_CONSTRAINTS
+)
+
+# Single-SOP prompts keyed by the codes returned by recognition_signals.resolve_sop().
+RECOGNITION_ENGAGEMENT_SOP_PROMPTS: dict[str, str] = {
+    "RE1": _RE_HEADER + RE_SOP_RE1 + _RE_CONSTRAINTS,
+    "RE2": _RE_HEADER + RE_SOP_RE2 + _RE_CONSTRAINTS,
+    "RE3": _RE_HEADER + RE_SOP_RE3 + _RE_CONSTRAINTS,
+    "RE4": _RE_HEADER + RE_SOP_RE4 + _RE_CONSTRAINTS,
+    "RE5": _RE_HEADER + RE_SOP_RE5 + _RE_CONSTRAINTS,
+    "RE6": _RE_HEADER + RE_SOP_RE6 + _RE_CONSTRAINTS,
+}
 
 
 CA_APAR_SYSTEM_PROMPT = (
