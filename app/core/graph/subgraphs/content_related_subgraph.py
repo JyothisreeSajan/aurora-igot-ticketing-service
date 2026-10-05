@@ -15,7 +15,17 @@ Categories handled (from CATEGORY_SUBCATEGORY_MAP -> content_related_issue):
                                               NOT handled here — see Certificate Not
                                               Received below; see
                                               COURSE_PROGRESS_SYSTEM_PROMPT]
-  - Content / Resource Not Opening          [stub]
+  - Content / Resource Not Opening          [implemented — mobile-app case: suggests
+                                              switching to desktop/laptop or enabling
+                                              desktop mode in the mobile browser, then
+                                              asks for device/app details if it still
+                                              fails; web-browser case (UC-04): matches
+                                              course/resource from the ticket text,
+                                              diagnoses by resource type — guides YouTube
+                                              playback issues (network-restriction check +
+                                              mobile-app workaround), escalates everything
+                                              else (SCORM/PDF/MP4/assessment/other); see
+                                              CONTENT_RESOURCE_NOT_OPENING_SYSTEM_PROMPT]
   - Event Related Issue                     [implemented — event video missing / not
                                               playing / progress not updating (event
                                               certificate: see Certificate Not Received); see
@@ -46,6 +56,7 @@ import logging
 from app.core.graph.state import TicketState
 from app.core.graph.subgraphs.base_subgraph import BaseSubgraph
 from app.core.tools.certificate_tools import get_certificate_not_received_tools, get_user_details
+from app.core.tools.content_resource_tools import get_content_resource_tools
 from app.core.tools.course_progress_tools import get_course_progress_tools
 from app.core.tools.enrolment_tools import get_enrolment_tools
 from app.core.tools.event_tools import get_event_tools
@@ -53,6 +64,7 @@ from app.core.tools.stub_tools import get_stub_tools
 from app.core.utils.prompt_templates import (
     CERTIFICATE_NAME_ISSUE_SYSTEM_PROMPT,
     CERTIFICATE_NOT_RECEIVED_SYSTEM_PROMPT,
+    CONTENT_RESOURCE_NOT_OPENING_SYSTEM_PROMPT,
     COURSE_PROGRESS_SYSTEM_PROMPT,
     ENROLMENT_ISSUES_SYSTEM_PROMPT,
     EVENT_ISSUES_SYSTEM_PROMPT,
@@ -68,6 +80,7 @@ _SUB_CATEGORY_PROMPTS: dict[str, str] = {
     "enrolment_issues": ENROLMENT_ISSUES_SYSTEM_PROMPT,
     "course_program_progress_issue": COURSE_PROGRESS_SYSTEM_PROMPT,
     "event_related_issue": EVENT_ISSUES_SYSTEM_PROMPT,
+    "content_resource_not_opening": CONTENT_RESOURCE_NOT_OPENING_SYSTEM_PROMPT,
     "unable_to_submit_rating_feedback": RATING_FEEDBACK_ISSUE_SYSTEM_PROMPT,
     "certificate_issue": CERTIFICATE_NAME_ISSUE_SYSTEM_PROMPT,
     "certificate_not_received": CERTIFICATE_NOT_RECEIVED_SYSTEM_PROMPT,
@@ -76,6 +89,7 @@ _SUB_CATEGORY_TOOLS = {
     "enrolment_issues": get_enrolment_tools,
     "course_program_progress_issue": get_course_progress_tools,
     "event_related_issue": get_event_tools,
+    "content_resource_not_opening": get_content_resource_tools,
     "unable_to_submit_rating_feedback": lambda: [],  # no tool call needed for this SOP
     "certificate_issue": lambda: [get_user_details],
     "certificate_not_received": get_certificate_not_received_tools,
