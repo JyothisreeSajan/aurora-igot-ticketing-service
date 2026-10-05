@@ -21,7 +21,11 @@ import logging
 from app.core.graph.state import TicketState
 from app.core.graph.subgraphs.base_subgraph import BaseSubgraph
 from app.core.tools.recognition_engagement_tools import get_recognition_engagement_tools
-from app.core.utils.prompt_templates import RECOGNITION_ENGAGEMENT_SYSTEM_PROMPT
+from app.core.utils.prompt_templates import (
+    RECOGNITION_ENGAGEMENT_SOP_PROMPTS,
+    RECOGNITION_ENGAGEMENT_SYSTEM_PROMPT,
+)
+from app.core.utils.recognition_signals import resolve_sop
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +34,34 @@ class RecognitionEngagementSubgraph(BaseSubgraph):
 
     CATEGORY = "recognition_and_engagement"
 
+    @staticmethod
+    def _ticket_text(state: TicketState) -> str:
+        """All user-written text on the ticket (the whole thread on a continuation)."""
+        if state.get("is_continuation"):
+            msgs = [m.get("content", "") for m in (state.get("conversation_messages") or [])
+                    if m.get("role") == "user"]
+            if msgs:
+                return "\n".join(msgs)
+        return state.get("message", "") or ""
+
     def system_prompt(self, state: TicketState) -> str:
-        return RECOGNITION_ENGAGEMENT_SYSTEM_PROMPT.format(
+        # Code (not the model) picks the single SOP to follow; falls back to the
+        # full six-SOP prompt only when the text gives no usable signal.
+        sop = resolve_sop(state.get("sub_category", ""), self._ticket_text(state))
+        template = RECOGNITION_ENGAGEMENT_SOP_PROMPTS.get(sop, RECOGNITION_ENGAGEMENT_SYSTEM_PROMPT)
+        prompt = template.format(
             email=state.get("email", "unknown"),
             main_category=state.get("main_category", "recognition_and_engagement"),
         )
+        if sop in RECOGNITION_ENGAGEMENT_SOP_PROMPTS:
+            prompt += (
+                f"\n\nACTIVE SOP (selected by code from the ticket text — do not switch): "
+                f"SOP-{sop}. Follow ONLY this SOP and ignore the others. Never ask the user "
+                "which portal or topic this is about unless this SOP itself says to."
+            )
+        logger.info(f"[recognition_engagement] ticket={state.get('ticket_id')} "
+                    f"sub_category='{state.get('sub_category')}' -> sop={sop}")
+        return prompt
 
     def get_tools(self, state: TicketState) -> list:
         return get_recognition_engagement_tools()
