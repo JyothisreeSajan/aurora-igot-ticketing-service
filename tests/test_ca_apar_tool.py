@@ -474,3 +474,21 @@ class TestGetCaAparTools:
             "resolve_org_names",
             "get_org_type",
         }
+
+
+# ── CA_APAR_SYSTEM_PROMPT — CAP Transfer Request / eligibility routing ──────────
+# Pure prompt-text regression guard: these blocks aren't exercised by the tool
+# tests above (no new tool code backs them), so a simple presence check catches
+# an accidental deletion/edit that would otherwise only surface in production.
+
+class TestCapPromptRouting:
+    def test_transfer_request_guidance_present_for_all_three_branches(self):
+        from app.core.utils.prompt_templates import CA_APAR_SYSTEM_PROMPT
+
+        for marker in ("STEP 3-TRANSFER", "STEP 1A-TRANSFER", "Karmayogi Prarambh Trainee"):
+            assert marker in CA_APAR_SYSTEM_PROMPT
+
+    def test_eligibility_vs_not_found_matching_guard_present(self):
+        from app.core.utils.prompt_templates import CA_APAR_SYSTEM_PROMPT
+
+        assert "do not confuse these two outcomes" in CA_APAR_SYSTEM_PROMPT
