@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from app.core.graph.subgraphs.content_related_subgraph import ContentRelatedSubgraph
 from app.core.tools.certificate_tools import get_certificate_not_received_tools
+from app.core.tools.content_resource_tools import get_content_resource_tools
 from app.core.tools.course_progress_tools import get_course_progress_tools
 from app.core.tools.enrolment_tools import get_enrolment_tools
 from app.core.tools.event_tools import get_event_tools
@@ -20,6 +21,7 @@ from app.core.tools.stub_tools import get_stub_tools
 from app.core.utils.prompt_templates import (
     CERTIFICATE_NAME_ISSUE_SYSTEM_PROMPT,
     CERTIFICATE_NOT_RECEIVED_SYSTEM_PROMPT,
+    CONTENT_RESOURCE_NOT_OPENING_SYSTEM_PROMPT,
     COURSE_PROGRESS_SYSTEM_PROMPT,
     ENROLMENT_ISSUES_SYSTEM_PROMPT,
     EVENT_ISSUES_SYSTEM_PROMPT,
@@ -60,11 +62,16 @@ class TestIsImplemented:
 
         assert subgraph._is_implemented({"sub_category": "certificate_not_received"}) is True
 
+    def test_content_resource_not_opening_is_implemented(self):
+        subgraph = ContentRelatedSubgraph()
+
+        assert subgraph._is_implemented({"sub_category": "content_resource_not_opening"}) is True
+
     def test_other_sub_categories_are_stubbed(self):
         subgraph = ContentRelatedSubgraph()
 
         for sub_category in [
-            "content_resource_not_opening",
+            "nonexistent_sub_category",
             "",
         ]:
             assert subgraph._is_implemented({"sub_category": sub_category}) is False
@@ -142,9 +149,19 @@ class TestSystemPrompt:
             assert tool_name in CERTIFICATE_NOT_RECEIVED_SYSTEM_PROMPT
             assert tool_name in registered
 
-    def test_other_sub_category_uses_stub_prompt(self):
+    def test_content_resource_not_opening_uses_dedicated_prompt(self):
         subgraph = ContentRelatedSubgraph()
         state = {"sub_category": "content_resource_not_opening", "main_category": "content_related_issue"}
+
+        prompt = subgraph.system_prompt(state)
+
+        assert prompt == CONTENT_RESOURCE_NOT_OPENING_SYSTEM_PROMPT.format(
+            email="unknown", main_category="content_related_issue"
+        )
+
+    def test_other_sub_category_uses_stub_prompt(self):
+        subgraph = ContentRelatedSubgraph()
+        state = {"sub_category": "nonexistent_sub_category", "main_category": "content_related_issue"}
 
         prompt = subgraph.system_prompt(state)
 
@@ -200,10 +217,17 @@ class TestGetTools:
 
         assert {t.name for t in tools} == {t.name for t in get_certificate_not_received_tools()}
 
-    def test_other_sub_category_returns_stub_tools(self):
+    def test_content_resource_not_opening_returns_content_resource_tools(self):
         subgraph = ContentRelatedSubgraph()
 
         tools = subgraph.get_tools({"sub_category": "content_resource_not_opening"})
+
+        assert {t.name for t in tools} == {t.name for t in get_content_resource_tools()}
+
+    def test_other_sub_category_returns_stub_tools(self):
+        subgraph = ContentRelatedSubgraph()
+
+        tools = subgraph.get_tools({"sub_category": "nonexistent_sub_category"})
 
         assert tools == get_stub_tools()
 
