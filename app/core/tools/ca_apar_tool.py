@@ -37,6 +37,17 @@ from app.core.utils.mdo_lookup import find_mdo_contact
 logger = logging.getLogger(__name__)
 
 CONTENT_TYPE_JSON = "application/json"
+USER_EMAIL_PLACEHOLDER = "{{USER_EMAIL}}"
+USER_PROFILE_NOT_FOUND_MESSAGE = "User profile not found."
+
+
+def _search_user_by_email(url: str, headers: dict, email: str, timeout: int = 10) -> list[dict]:
+    """POST to the User Search API filtered by email; returns the raw content list."""
+    payload = {"request": {"filters": {"email": email}}}
+    resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
+    resp.raise_for_status()
+    return resp.json().get("result", {}).get("response", {}).get("content", [])
+
 
 ENROLLMENT_FIELDS = [
     "enrolledDate",
@@ -75,16 +86,13 @@ def get_user_enrollments(email: str, status_filter: str | None = None, content_i
             "Authorization": f"Bearer {IGOT_KEY}",
             "Content-Type": CONTENT_TYPE_JSON,
         }
-        payload = {"request": {"filters": {"email": email}}}
-        search_resp = requests.post(search_url, json=payload, headers=headers, timeout=10)
-        search_resp.raise_for_status()
-        content = search_resp.json().get("result", {}).get("response", {}).get("content", [])
+        content = _search_user_by_email(search_url, headers, email)
 
         if not content:
-            return json.dumps({"error": "User not found.", "_spoc_replacements": {"{{USER_EMAIL}}": email}})
+            return json.dumps({"error": "User not found.", "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email}})
         user_id = content[0].get("id")
         if not user_id:
-            return json.dumps({"error": "User found but user_id is empty.", "_spoc_replacements": {"{{USER_EMAIL}}": email}})
+            return json.dumps({"error": "User found but user_id is empty.", "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email}})
 
         api_status = ["In-Progress", "Completed"]
         if status_filter == "In-Progress":
@@ -109,14 +117,14 @@ def get_user_enrollments(email: str, status_filter: str | None = None, content_i
             # enrolledDate, etc.) invite the response to describe details the SOP
             # never asked for.
             return json.dumps({
-                "email": "{{USER_EMAIL}}",
+                "email": USER_EMAIL_PLACEHOLDER,
                 "content_id": content_id,
                 "course_name": match.get("courseName") if match else None,
                 "completed": bool(match and match.get("status") == 2),
                 "certificate_issued": bool(
                     match and match.get("status") == 2 and match.get("issuedCertificates")
                 ),
-                "_spoc_replacements": {"{{USER_EMAIL}}": email},
+                "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
             }, indent=2)
 
         # enrolledDate can be present but None — `or 0` handles that; `.get(key, 0)` alone does not.
@@ -127,14 +135,14 @@ def get_user_enrollments(email: str, status_filter: str | None = None, content_i
         ]
 
         return json.dumps({
-            "email": "{{USER_EMAIL}}",
+            "email": USER_EMAIL_PLACEHOLDER,
             "total_fetched": len(courses),
             "returned": len(filtered_courses),
             "courses": filtered_courses,
-            "_spoc_replacements": {"{{USER_EMAIL}}": email},
+            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
         }, indent=2)
     except Exception as e:
-        return json.dumps({"error": f"Error fetching enrollments: {e!s}", "_spoc_replacements": {"{{USER_EMAIL}}": email}})
+        return json.dumps({"error": f"Error fetching enrollments: {e!s}", "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email}})
 
 
 def _flatten_plan(p: dict) -> dict:
@@ -166,25 +174,22 @@ def get_user_cbp_plan(email: str) -> str:
         "Content-Type": CONTENT_TYPE_JSON,
     }
     try:
-        profile_payload = {"request": {"filters": {"email": email}}}
-        profile_resp = requests.post(search_url, json=profile_payload, headers=headers, timeout=10)
-        profile_resp.raise_for_status()
-        profile_content = profile_resp.json().get("result", {}).get("response", {}).get("content", [])
+        profile_content = _search_user_by_email(search_url, headers, email)
         if not profile_content:
             return json.dumps({
-                "email": "{{USER_EMAIL}}",
+                "email": USER_EMAIL_PLACEHOLDER,
                 "found": False,
-                "message": "User profile not found.",
-                "_spoc_replacements": {"{{USER_EMAIL}}": email},
+                "message": USER_PROFILE_NOT_FOUND_MESSAGE,
+                "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
             })
 
         user_id = profile_content[0].get("id")
         if not user_id:
             return json.dumps({
-                "email": "{{USER_EMAIL}}",
+                "email": USER_EMAIL_PLACEHOLDER,
                 "found": False,
                 "message": "User id not available in profile.",
-                "_spoc_replacements": {"{{USER_EMAIL}}": email},
+                "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
             })
 
         cbp_url = f"{IGOT_API_HOST_URL}/api/supportportal/cbplan/v2/admin/user/list/{user_id}"
@@ -203,7 +208,7 @@ def get_user_cbp_plan(email: str) -> str:
         non_apar_plans = [p for p in plans if not p.get("is_apar")]
 
         return json.dumps({
-            "email":            "{{USER_EMAIL}}",
+            "email":            USER_EMAIL_PLACEHOLDER,
             "first_name":       profile_content[0].get("firstName"),
             "found":            True,
             "total_count":      len(plans),
@@ -211,15 +216,15 @@ def get_user_cbp_plan(email: str) -> str:
             "non_apar_count":   len(non_apar_plans),
             "apar_plans":       apar_plans,
             "non_apar_plans":   non_apar_plans,
-            "_spoc_replacements": {"{{USER_EMAIL}}": email},
+            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
         }, indent=2)
 
     except Exception as e:
         return json.dumps({
-            "email": "{{USER_EMAIL}}",
+            "email": USER_EMAIL_PLACEHOLDER,
             "found": False,
             "error": str(e),
-            "_spoc_replacements": {"{{USER_EMAIL}}": email},
+            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
         })
 
 
@@ -241,27 +246,24 @@ def get_assigned_cap_courses(email: str) -> str:
         "Content-Type": CONTENT_TYPE_JSON,
     }
     try:
-        profile_payload = {"request": {"filters": {"email": email}}}
-        profile_resp = requests.post(search_url, json=profile_payload, headers=headers, timeout=10)
-        profile_resp.raise_for_status()
-        profile_content = profile_resp.json().get("result", {}).get("response", {}).get("content", [])
+        profile_content = _search_user_by_email(search_url, headers, email)
         if not profile_content:
             logger.warning("[get_assigned_cap_courses] No iGOT profile found for this email.")
             return json.dumps({
-                "email": "{{USER_EMAIL}}",
+                "email": USER_EMAIL_PLACEHOLDER,
                 "found": False,
-                "message": "User profile not found.",
-                "_spoc_replacements": {"{{USER_EMAIL}}": email},
+                "message": USER_PROFILE_NOT_FOUND_MESSAGE,
+                "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
             })
 
         user_id = profile_content[0].get("id")
         if not user_id:
             logger.warning("[get_assigned_cap_courses] Profile found but missing id field.")
             return json.dumps({
-                "email": "{{USER_EMAIL}}",
+                "email": USER_EMAIL_PLACEHOLDER,
                 "found": False,
                 "message": "User id not available in profile.",
-                "_spoc_replacements": {"{{USER_EMAIL}}": email},
+                "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
             })
 
         assigned_url = f"{IGOT_API_HOST_URL}/api/supportportal/admin/user/v2/assignedcourses/{user_id}"
@@ -295,21 +297,21 @@ def get_assigned_cap_courses(email: str) -> str:
         ]
 
         return json.dumps({
-            "email":      "{{USER_EMAIL}}",
+            "email":      USER_EMAIL_PLACEHOLDER,
             "first_name": profile_content[0].get("firstName"),
             "found":      True,
             "cap_count":  len(caps),
             "caps":       caps,
-            "_spoc_replacements": {"{{USER_EMAIL}}": email},
+            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
         }, indent=2)
 
     except Exception as e:
         logger.error("[get_assigned_cap_courses] Failed: %s", e)
         return json.dumps({
-            "email": "{{USER_EMAIL}}",
+            "email": USER_EMAIL_PLACEHOLDER,
             "found": False,
             "error": str(e),
-            "_spoc_replacements": {"{{USER_EMAIL}}": email},
+            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
         })
 
 
@@ -411,10 +413,7 @@ def get_assessment_attempt_count(email: str, assessment_identifier: str) -> str:
         "Content-Type": CONTENT_TYPE_JSON,
     }
     try:
-        profile_payload = {"request": {"filters": {"email": email}}}
-        profile_resp = requests.post(search_url, json=profile_payload, headers=headers, timeout=10)
-        profile_resp.raise_for_status()
-        profile_content = profile_resp.json().get("result", {}).get("response", {}).get("content", [])
+        profile_content = _search_user_by_email(search_url, headers, email)
         if not profile_content:
             return json.dumps({"found": False, "error": "User not found."})
         user_id = profile_content[0].get("id")
@@ -568,25 +567,22 @@ def get_user_cap_assignment(email: str) -> str:
         "Content-Type": CONTENT_TYPE_JSON,
     }
     try:
-        profile_payload = {"request": {"filters": {"email": email}}}
-        profile_resp = requests.post(search_url, json=profile_payload, headers=headers, timeout=10)
-        profile_resp.raise_for_status()
-        profile_content = profile_resp.json().get("result", {}).get("response", {}).get("content", [])
+        profile_content = _search_user_by_email(search_url, headers, email)
         if not profile_content:
             return json.dumps({
-                "email": "{{USER_EMAIL}}",
+                "email": USER_EMAIL_PLACEHOLDER,
                 "found": False,
-                "message": "User profile not found.",
-                "_spoc_replacements": {"{{USER_EMAIL}}": email},
+                "message": USER_PROFILE_NOT_FOUND_MESSAGE,
+                "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
             })
 
         user_id = profile_content[0].get("id")
         if not user_id:
             return json.dumps({
-                "email": "{{USER_EMAIL}}",
+                "email": USER_EMAIL_PLACEHOLDER,
                 "found": False,
                 "message": "User id not available in profile.",
-                "_spoc_replacements": {"{{USER_EMAIL}}": email},
+                "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
             })
 
         cap_url = f"{IGOT_API_HOST_URL}/api/supportportal/admin/user/v2/assignedcourses/{user_id}"
@@ -610,19 +606,19 @@ def get_user_cap_assignment(email: str) -> str:
         assignments = [_flatten_cap(c) for c in raw_assignments]
 
         return json.dumps({
-            "email": "{{USER_EMAIL}}",
+            "email": USER_EMAIL_PLACEHOLDER,
             "found": True,
             "total_count": len(assignments),
             "assignments": assignments,
-            "_spoc_replacements": {"{{USER_EMAIL}}": email},
+            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
         }, indent=2, default=str)
 
     except Exception as e:
         return json.dumps({
-            "email": "{{USER_EMAIL}}",
+            "email": USER_EMAIL_PLACEHOLDER,
             "found": False,
             "error": str(e),
-            "_spoc_replacements": {"{{USER_EMAIL}}": email},
+            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
         })
 
 @tool
@@ -642,27 +638,22 @@ def get_mdo_details(email: str) -> str:
     headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
 
     try:
-        profile_payload = {"request": {"filters": {"email": email}}}
-        profile_resp = requests.post(url, json=profile_payload, headers=headers, timeout=10)
-        profile_resp.raise_for_status()
-        profile_content = (
-            profile_resp.json().get("result", {}).get("response", {}).get("content", [])
-        )
+        profile_content = _search_user_by_email(url, headers, email)
         if not profile_content:
             return json.dumps({
-                "email": "{{USER_EMAIL}}",
+                "email": USER_EMAIL_PLACEHOLDER,
                 "found": False,
-                "message": "User profile not found.",
-                "_spoc_replacements": {"{{USER_EMAIL}}": email},
+                "message": USER_PROFILE_NOT_FOUND_MESSAGE,
+                "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
             })
 
         root_org_id = profile_content[0].get("rootOrgId")
         if not root_org_id:
             return json.dumps({
-                "email": "{{USER_EMAIL}}",
+                "email": USER_EMAIL_PLACEHOLDER,
                 "found": False,
                 "message": "rootOrgId not available in user profile.",
-                "_spoc_replacements": {"{{USER_EMAIL}}": email},
+                "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
             })
 
         admin, _matched_role, match_count = find_mdo_contact(url, headers, root_org_id, timeout=10)
@@ -711,10 +702,10 @@ def get_mdo_details(email: str) -> str:
 
     except Exception as e:
         return json.dumps({
-            "email": "{{USER_EMAIL}}",
+            "email": USER_EMAIL_PLACEHOLDER,
             "found": False,
             "error": str(e),
-            "_spoc_replacements": {"{{USER_EMAIL}}": email},
+            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
         })
 
 
