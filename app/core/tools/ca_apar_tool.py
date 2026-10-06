@@ -29,9 +29,10 @@ import requests
 from langchain.tools import tool
 
 from app.core.tools.course_tools import get_access_settings
-from app.core.tools.login_issue_tool import get_mdo_details, get_yp_am_details
+from app.core.tools.login_issue_tool import get_yp_am_details
 from app.core.tools.profile_update_tool import get_user_profile
 from app.core.utils.config import IGOT_API_HOST_URL, IGOT_KEY
+from app.core.utils.mdo_lookup import find_mdo_contact
 
 logger = logging.getLogger(__name__)
 
@@ -623,6 +624,99 @@ def get_user_cap_assignment(email: str) -> str:
             "error": str(e),
             "_spoc_replacements": {"{{USER_EMAIL}}": email},
         })
+
+@tool
+def get_mdo_details(email: str) -> str:
+    """Fetch MDO (Mission Director Officer / Org Admin) contact details for a user's organisation.
+
+    Performs two API calls:
+      1. Fetch the user profile by email to obtain the rootOrgId.
+      2. Search for an active MDO_LEADER in that organisation, falling back to
+         MDO_ADMIN only if no MDO_LEADER exists (see mdo_lookup.py).
+
+    Returns MDO admin name, email, mobile, org name, and ministry/state information.
+
+    Used in SOP-1 STEP 5A-1, SOP-3 STEP 1A.
+    """
+    url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
+    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
+
+    try:
+        profile_payload = {"request": {"filters": {"email": email}}}
+        profile_resp = requests.post(url, json=profile_payload, headers=headers, timeout=10)
+        profile_resp.raise_for_status()
+        profile_content = (
+            profile_resp.json().get("result", {}).get("response", {}).get("content", [])
+        )
+        if not profile_content:
+            return json.dumps({
+                "email": "{{USER_EMAIL}}",
+                "found": False,
+                "message": "User profile not found.",
+                "_spoc_replacements": {"{{USER_EMAIL}}": email},
+            })
+
+        root_org_id = profile_content[0].get("rootOrgId")
+        if not root_org_id:
+            return json.dumps({
+                "email": "{{USER_EMAIL}}",
+                "found": False,
+                "message": "rootOrgId not available in user profile.",
+                "_spoc_replacements": {"{{USER_EMAIL}}": email},
+            })
+
+        admin, _matched_role, match_count = find_mdo_contact(url, headers, root_org_id, timeout=10)
+        if admin is None:
+            return json.dumps({
+                "root_org_id": root_org_id,
+                "found": False,
+                "message": f"No active MDO Admin found for organisation '{root_org_id}'.",
+            })
+
+        pd = admin.get("profileDetails", {})
+        personal = pd.get("personalDetails", {})
+
+        real_name = personal.get("firstname", "MDO Admin")
+        real_email = personal.get("primaryEmail", "")
+        real_mobile = str(personal.get("mobile", ""))
+
+        spoc_replacements = {}
+        if real_name:
+            spoc_replacements["{{MDO_ADMIN_NAME}}"] = real_name
+        if real_email:
+            spoc_replacements["{{MDO_ADMIN_EMAIL}}"] = real_email
+        if real_mobile:
+            spoc_replacements["{{MDO_ADMIN_MOBILE}}"] = real_mobile
+
+        admins = [
+            {
+                "rootOrgName":            admin.get("rootOrgName", ""),
+                "rootOrgId":              admin.get("rootOrgId", ""),
+                "mdo_admin_name":         "{{MDO_ADMIN_NAME}}",
+                "mdo_admin_email":        "{{MDO_ADMIN_EMAIL}}",
+                "mdo_admin_mobile":       "{{MDO_ADMIN_MOBILE}}",
+                "ministryOrStateOrgName": pd.get("ministryOrStateOrgName", ""),
+                "ministryOrStateType":    pd.get("ministryOrStateType", ""),
+                "profileStatus":          pd.get("profileStatus", ""),
+            }
+        ]
+
+        return json.dumps({
+            "root_org_id": root_org_id,
+            "found":       True,
+            "count":       match_count,
+            "admins":      admins,
+            "_spoc_replacements": spoc_replacements,
+        })
+
+    except Exception as e:
+        return json.dumps({
+            "email": "{{USER_EMAIL}}",
+            "found": False,
+            "error": str(e),
+            "_spoc_replacements": {"{{USER_EMAIL}}": email},
+        })
+
 
 def get_ca_apar_tools() -> list:
     """Return all tools for the CaAparSubgraph."""

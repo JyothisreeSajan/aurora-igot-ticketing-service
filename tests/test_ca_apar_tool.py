@@ -13,6 +13,7 @@ from app.core.tools.ca_apar_tool import (
     get_assigned_cap_courses,
     get_ca_apar_tools,
     get_cap_hierarchy,
+    get_mdo_details,
     get_org_type,
     get_user_cap_assignment,
     get_user_cbp_plan,
@@ -451,6 +452,72 @@ class TestGetUserCapAssignment:
 
         assert result["found"] is False
         assert "error" in result
+
+
+# ── get_mdo_details (SOP-1 STEP 5A-1, SOP-3 STEP 1A) ────────────────────────
+# Leader-preferred/Admin-fallback resolution is mdo_lookup.find_mdo_contact's
+# job (see test_mdo_lookup.py); these tests cover this tool's own plumbing:
+# profile -> rootOrgId -> find_mdo_contact -> filtered result.
+
+def _mdo_entry(roles, name="Some Admin"):
+    return {
+        "rootOrgName": "Dept of Project management",
+        "rootOrgId": "org-1",
+        "organisations": [{"roles": roles}],
+        "profileDetails": {"personalDetails": {"firstname": name, "primaryEmail": "a@x.com", "mobile": "999"}},
+    }
+
+
+class TestGetMdoDetails:
+    @patch("app.core.tools.ca_apar_tool.requests.post")
+    def test_profile_not_found(self, mock_post):
+        mock_post.return_value = _search_response([])
+
+        result = json.loads(get_mdo_details.func("missing@x.com"))
+
+        assert result["found"] is False
+        assert result["message"] == "User profile not found."
+
+    @patch("app.core.tools.ca_apar_tool.requests.post")
+    def test_leader_found_on_first_search(self, mock_post):
+        leader = _mdo_entry(["MDO_LEADER"], name="Leader Name")
+        mock_post.side_effect = [
+            _search_response([{"rootOrgId": "org-1"}]),  # profile lookup
+            _search_response([leader]),                   # MDO_LEADER search
+        ]
+
+        result = json.loads(get_mdo_details.func("user@x.com"))
+
+        assert result["found"] is True
+        assert result["admins"][0]["rootOrgId"] == "org-1"
+        assert result["_spoc_replacements"]["{{MDO_ADMIN_NAME}}"] == "Leader Name"
+
+    @patch("app.core.tools.ca_apar_tool.requests.post")
+    def test_falls_back_to_admin_when_no_leader(self, mock_post):
+        admin = _mdo_entry(["MDO_ADMIN"], name="Admin Name")
+        mock_post.side_effect = [
+            _search_response([{"rootOrgId": "org-1"}]),  # profile lookup
+            _search_response([]),                          # MDO_LEADER search: empty
+            _search_response([admin]),                     # MDO_ADMIN search
+        ]
+
+        result = json.loads(get_mdo_details.func("user@x.com"))
+
+        assert result["found"] is True
+        assert result["_spoc_replacements"]["{{MDO_ADMIN_NAME}}"] == "Admin Name"
+
+    @patch("app.core.tools.ca_apar_tool.requests.post")
+    def test_no_contact_found(self, mock_post):
+        mock_post.side_effect = [
+            _search_response([{"rootOrgId": "org-1"}]),  # profile lookup
+            _search_response([]),                          # MDO_LEADER search: empty
+            _search_response([]),                          # MDO_ADMIN search: empty
+        ]
+
+        result = json.loads(get_mdo_details.func("user@x.com"))
+
+        assert result["found"] is False
+        assert "No active MDO Admin found" in result["message"]
 
 
 # ── Convenience list ─────────────────────────────────────────────────────────
