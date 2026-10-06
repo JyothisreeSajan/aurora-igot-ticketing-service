@@ -49,6 +49,59 @@ def _search_user_by_email(url: str, headers: dict, email: str, timeout: int = 10
     return resp.json().get("result", {}).get("response", {}).get("content", [])
 
 
+def _profile_not_found_response(email: str) -> str:
+    return json.dumps({
+        "email": USER_EMAIL_PLACEHOLDER,
+        "found": False,
+        "message": USER_PROFILE_NOT_FOUND_MESSAGE,
+        "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
+    })
+
+
+def _require_user_id(profile_content: list[dict], email: str, warn_prefix: str | None = None) -> tuple[str | None, str | None]:
+    """Validate profile_content from _search_user_by_email and extract user_id.
+
+    Returns (user_id, None) on success, or (None, error_json_string) using the
+    standard not-found / id-missing shape shared by get_user_cbp_plan,
+    get_assigned_cap_courses, and get_user_cap_assignment.
+    """
+    if not profile_content:
+        if warn_prefix:
+            logger.warning(f"[{warn_prefix}] No iGOT profile found for this email.")
+        return None, _profile_not_found_response(email)
+
+    user_id = profile_content[0].get("id")
+    if not user_id:
+        if warn_prefix:
+            logger.warning(f"[{warn_prefix}] Profile found but missing id field.")
+        return None, json.dumps({
+            "email": USER_EMAIL_PLACEHOLDER,
+            "found": False,
+            "message": "User id not available in profile.",
+            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
+        })
+    return user_id, None
+
+
+def _fetch_error_response(email: str, error: Exception) -> str:
+    return json.dumps({
+        "email": USER_EMAIL_PLACEHOLDER,
+        "found": False,
+        "error": str(error),
+        "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
+    })
+
+
+def _search_org_by_id(org_ids: list[str], limit: int, timeout: int = 10) -> list[dict]:
+    """POST to the Org Search API filtered by id; returns the raw content list."""
+    url = f"{IGOT_API_HOST_URL}/api/org/v1/search"
+    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
+    payload = {"request": {"filters": {"id": org_ids}, "limit": limit}}
+    resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
+    resp.raise_for_status()
+    return resp.json().get("result", {}).get("response", {}).get("content", [])
+
+
 ENROLLMENT_FIELDS = [
     "enrolledDate",
     "contentId",
@@ -175,22 +228,9 @@ def get_user_cbp_plan(email: str) -> str:
     }
     try:
         profile_content = _search_user_by_email(search_url, headers, email)
-        if not profile_content:
-            return json.dumps({
-                "email": USER_EMAIL_PLACEHOLDER,
-                "found": False,
-                "message": USER_PROFILE_NOT_FOUND_MESSAGE,
-                "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
-            })
-
-        user_id = profile_content[0].get("id")
-        if not user_id:
-            return json.dumps({
-                "email": USER_EMAIL_PLACEHOLDER,
-                "found": False,
-                "message": "User id not available in profile.",
-                "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
-            })
+        user_id, error = _require_user_id(profile_content, email)
+        if error:
+            return error
 
         cbp_url = f"{IGOT_API_HOST_URL}/api/supportportal/cbplan/v2/admin/user/list/{user_id}"
         cbp_headers = {
@@ -220,12 +260,7 @@ def get_user_cbp_plan(email: str) -> str:
         }, indent=2)
 
     except Exception as e:
-        return json.dumps({
-            "email": USER_EMAIL_PLACEHOLDER,
-            "found": False,
-            "error": str(e),
-            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
-        })
+        return _fetch_error_response(email, e)
 
 
 @tool
@@ -247,24 +282,9 @@ def get_assigned_cap_courses(email: str) -> str:
     }
     try:
         profile_content = _search_user_by_email(search_url, headers, email)
-        if not profile_content:
-            logger.warning("[get_assigned_cap_courses] No iGOT profile found for this email.")
-            return json.dumps({
-                "email": USER_EMAIL_PLACEHOLDER,
-                "found": False,
-                "message": USER_PROFILE_NOT_FOUND_MESSAGE,
-                "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
-            })
-
-        user_id = profile_content[0].get("id")
-        if not user_id:
-            logger.warning("[get_assigned_cap_courses] Profile found but missing id field.")
-            return json.dumps({
-                "email": USER_EMAIL_PLACEHOLDER,
-                "found": False,
-                "message": "User id not available in profile.",
-                "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
-            })
+        user_id, error = _require_user_id(profile_content, email, warn_prefix="get_assigned_cap_courses")
+        if error:
+            return error
 
         assigned_url = f"{IGOT_API_HOST_URL}/api/supportportal/admin/user/v2/assignedcourses/{user_id}"
         assigned_headers = {**headers, "x-authenticated-user-token": ""}
@@ -307,12 +327,7 @@ def get_assigned_cap_courses(email: str) -> str:
 
     except Exception as e:
         logger.error("[get_assigned_cap_courses] Failed: %s", e)
-        return json.dumps({
-            "email": USER_EMAIL_PLACEHOLDER,
-            "found": False,
-            "error": str(e),
-            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
-        })
+        return _fetch_error_response(email, e)
 
 
 
@@ -467,13 +482,8 @@ def resolve_org_names(org_ids: list[str]) -> str:
     into human-readable organisation names for the response. Designation
     criteria need no resolution — those are already plain names.
     """
-    url = f"{IGOT_API_HOST_URL}/api/org/v1/search"
-    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
     try:
-        payload = {"request": {"filters": {"id": org_ids}, "limit": len(org_ids) or 1}}
-        resp = requests.post(url, json=payload, headers=headers, timeout=10)
-        resp.raise_for_status()
-        content = resp.json().get("result", {}).get("response", {}).get("content", [])
+        content = _search_org_by_id(org_ids, len(org_ids) or 1)
         return json.dumps({
             "org_ids": org_ids,
             "resolved": [{"id": o.get("id"), "orgName": o.get("orgName")} for o in content],
@@ -502,13 +512,8 @@ def get_org_type(root_org_id: str) -> str:
 
     Returns org_type: "state", "ministry", or "unknown" (neither flag set).
     """
-    url = f"{IGOT_API_HOST_URL}/api/org/v1/search"
-    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
     try:
-        payload = {"request": {"filters": {"id": [root_org_id]}, "limit": 1}}
-        resp = requests.post(url, json=payload, headers=headers, timeout=10)
-        resp.raise_for_status()
-        content = resp.json().get("result", {}).get("response", {}).get("content", [])
+        content = _search_org_by_id([root_org_id], 1)
         if not content:
             return json.dumps({"root_org_id": root_org_id, "found": False, "org_type": "unknown"})
 
@@ -568,22 +573,9 @@ def get_user_cap_assignment(email: str) -> str:
     }
     try:
         profile_content = _search_user_by_email(search_url, headers, email)
-        if not profile_content:
-            return json.dumps({
-                "email": USER_EMAIL_PLACEHOLDER,
-                "found": False,
-                "message": USER_PROFILE_NOT_FOUND_MESSAGE,
-                "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
-            })
-
-        user_id = profile_content[0].get("id")
-        if not user_id:
-            return json.dumps({
-                "email": USER_EMAIL_PLACEHOLDER,
-                "found": False,
-                "message": "User id not available in profile.",
-                "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
-            })
+        user_id, error = _require_user_id(profile_content, email)
+        if error:
+            return error
 
         cap_url = f"{IGOT_API_HOST_URL}/api/supportportal/admin/user/v2/assignedcourses/{user_id}"
         cap_headers = {
@@ -614,12 +606,7 @@ def get_user_cap_assignment(email: str) -> str:
         }, indent=2, default=str)
 
     except Exception as e:
-        return json.dumps({
-            "email": USER_EMAIL_PLACEHOLDER,
-            "found": False,
-            "error": str(e),
-            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
-        })
+        return _fetch_error_response(email, e)
 
 @tool
 def get_mdo_details(email: str) -> str:
@@ -640,12 +627,7 @@ def get_mdo_details(email: str) -> str:
     try:
         profile_content = _search_user_by_email(url, headers, email)
         if not profile_content:
-            return json.dumps({
-                "email": USER_EMAIL_PLACEHOLDER,
-                "found": False,
-                "message": USER_PROFILE_NOT_FOUND_MESSAGE,
-                "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
-            })
+            return _profile_not_found_response(email)
 
         root_org_id = profile_content[0].get("rootOrgId")
         if not root_org_id:
@@ -701,12 +683,7 @@ def get_mdo_details(email: str) -> str:
         })
 
     except Exception as e:
-        return json.dumps({
-            "email": USER_EMAIL_PLACEHOLDER,
-            "found": False,
-            "error": str(e),
-            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
-        })
+        return _fetch_error_response(email, e)
 
 
 def get_ca_apar_tools() -> list:
