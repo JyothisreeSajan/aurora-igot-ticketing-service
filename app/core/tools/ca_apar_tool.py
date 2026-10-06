@@ -41,6 +41,13 @@ USER_EMAIL_PLACEHOLDER = "{{USER_EMAIL}}"
 USER_PROFILE_NOT_FOUND_MESSAGE = "User profile not found."
 
 
+def _user_search_request_context() -> tuple[str, dict]:
+    """Shared (url, headers) pair for the private User Search API."""
+    url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
+    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
+    return url, headers
+
+
 def _search_user_by_email(url: str, headers: dict, email: str, timeout: int = 10) -> list[dict]:
     """POST to the User Search API filtered by email; returns the raw content list."""
     payload = {"request": {"filters": {"email": email}}}
@@ -81,6 +88,21 @@ def _require_user_id(profile_content: list[dict], email: str, warn_prefix: str |
             "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
         })
     return user_id, None
+
+
+def _resolve_user_id_by_email(email: str, warn_prefix: str | None = None) -> tuple[str | None, str | None, str | None]:
+    """Fetch the user profile by email and extract (user_id, first_name, error_json).
+
+    error_json is None on success; otherwise user_id/first_name are None.
+    Shared by get_user_cbp_plan, get_assigned_cap_courses, and
+    get_user_cap_assignment.
+    """
+    search_url, headers = _user_search_request_context()
+    profile_content = _search_user_by_email(search_url, headers, email)
+    user_id, error = _require_user_id(profile_content, email, warn_prefix)
+    if error:
+        return None, None, error
+    return user_id, profile_content[0].get("firstName"), None
 
 
 def _fetch_error_response(email: str, error: Exception) -> str:
@@ -134,11 +156,7 @@ def get_user_enrollments(email: str, status_filter: str | None = None, content_i
     and wrongly read as "never started".
     """
     try:
-        search_url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
-        headers = {
-            "Authorization": f"Bearer {IGOT_KEY}",
-            "Content-Type": CONTENT_TYPE_JSON,
-        }
+        search_url, headers = _user_search_request_context()
         content = _search_user_by_email(search_url, headers, email)
 
         if not content:
@@ -221,14 +239,8 @@ def get_user_cbp_plan(email: str) -> str:
     Args:
         email: The user's email address.
     """
-    search_url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
-    headers = {
-        "Authorization": f"Bearer {IGOT_KEY}",
-        "Content-Type": CONTENT_TYPE_JSON,
-    }
     try:
-        profile_content = _search_user_by_email(search_url, headers, email)
-        user_id, error = _require_user_id(profile_content, email)
+        user_id, first_name, error = _resolve_user_id_by_email(email)
         if error:
             return error
 
@@ -249,7 +261,7 @@ def get_user_cbp_plan(email: str) -> str:
 
         return json.dumps({
             "email":            USER_EMAIL_PLACEHOLDER,
-            "first_name":       profile_content[0].get("firstName"),
+            "first_name":       first_name,
             "found":            True,
             "total_count":      len(plans),
             "apar_count":       len(apar_plans),
@@ -275,19 +287,14 @@ def get_assigned_cap_courses(email: str) -> str:
     Args:
         email: The user's email address.
     """
-    search_url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
-    headers = {
-        "Authorization": f"Bearer {IGOT_KEY}",
-        "Content-Type": CONTENT_TYPE_JSON,
-    }
     try:
-        profile_content = _search_user_by_email(search_url, headers, email)
-        user_id, error = _require_user_id(profile_content, email, warn_prefix="get_assigned_cap_courses")
+        user_id, first_name, error = _resolve_user_id_by_email(email, warn_prefix="get_assigned_cap_courses")
         if error:
             return error
 
         assigned_url = f"{IGOT_API_HOST_URL}/api/supportportal/admin/user/v2/assignedcourses/{user_id}"
-        assigned_headers = {**headers, "x-authenticated-user-token": ""}
+        _, base_headers = _user_search_request_context()
+        assigned_headers = {**base_headers, "x-authenticated-user-token": ""}
         try:
             assigned_resp = requests.post(
                 assigned_url,
@@ -318,7 +325,7 @@ def get_assigned_cap_courses(email: str) -> str:
 
         return json.dumps({
             "email":      USER_EMAIL_PLACEHOLDER,
-            "first_name": profile_content[0].get("firstName"),
+            "first_name": first_name,
             "found":      True,
             "cap_count":  len(caps),
             "caps":       caps,
@@ -422,12 +429,8 @@ def get_assessment_attempt_count(email: str, assessment_identifier: str) -> str:
             (the plan_id/content_id from STEP 1) only when get_cap_hierarchy found
             no such child, e.g. an older/flat CAP structure.
     """
-    search_url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
-    headers = {
-        "Authorization": f"Bearer {IGOT_KEY}",
-        "Content-Type": CONTENT_TYPE_JSON,
-    }
     try:
+        search_url, headers = _user_search_request_context()
         profile_content = _search_user_by_email(search_url, headers, email)
         if not profile_content:
             return json.dumps({"found": False, "error": "User not found."})
@@ -566,14 +569,8 @@ def get_user_cap_assignment(email: str) -> str:
     Used in SOP-2 STEP 2 to determine whether a CAP is assigned, and to read its
     name, link, and due date.
     """
-    search_url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
-    headers = {
-        "Authorization": f"Bearer {IGOT_KEY}",
-        "Content-Type": CONTENT_TYPE_JSON,
-    }
     try:
-        profile_content = _search_user_by_email(search_url, headers, email)
-        user_id, error = _require_user_id(profile_content, email)
+        user_id, _first_name, error = _resolve_user_id_by_email(email)
         if error:
             return error
 
@@ -621,10 +618,8 @@ def get_mdo_details(email: str) -> str:
 
     Used in SOP-1 STEP 5A-1, SOP-3 STEP 1A.
     """
-    url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
-    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
-
     try:
+        url, headers = _user_search_request_context()
         profile_content = _search_user_by_email(url, headers, email)
         if not profile_content:
             return _profile_not_found_response(email)
