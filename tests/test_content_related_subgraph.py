@@ -328,3 +328,20 @@ class TestEventRelatedIssue:
         tools = ContentRelatedSubgraph().get_tools({"sub_category": "event_related_issue"})
 
         assert tools == get_event_tools()
+
+
+# ── CERTIFICATE_NAME_ISSUE_SYSTEM_PROMPT — combined-message regression guard ──
+# Pure prompt-text check: the flow must always give re-download steps AND
+# name-update steps together in one message, never split across a
+# first-contact/follow-up pair. Guards against the old two-turn design
+# silently coming back.
+
+class TestCertificateNameIssuePromptCombinedMessage:
+    def test_single_combined_step_present(self):
+        assert "STEP 2 — Combined Response: Verify Name, Re-download, and Update If Needed" in CERTIFICATE_NAME_ISSUE_SYSTEM_PROMPT
+
+    def test_no_separate_followup_step_present(self):
+        assert "STEP 3" not in CERTIFICATE_NAME_ISSUE_SYSTEM_PROMPT
+
+    def test_never_split_across_turns_instruction_present(self):
+        assert "never split this across two separate turns" in CERTIFICATE_NAME_ISSUE_SYSTEM_PROMPT

@@ -35,6 +35,7 @@ from app.core.tools.profile_user_management_tools import (
     search_organization_under_ministry_or_state,
     validate_new_contact_domain,
 )
+from app.core.utils.prompt_templates import PROFILE_USER_MANAGEMENT_SYSTEM_PROMPT
 
 
 def _mock_response(payload):
@@ -773,3 +774,19 @@ class TestGetProfileUserManagementTools:
             "get_user_ehrms_details",
             "get_profile_completion_details",
         }
+
+
+# ── PROFILE_USER_MANAGEMENT_SYSTEM_PROMPT — SOP-P4/SOP-A2 routing guard ─────
+# Pure prompt-text check: an explicit OTP-not-received complaint must route to
+# SOP-P4, and every other email/mobile update request must route to SOP-A2 —
+# guards against the two SOPs' scopes silently drifting back into overlap.
+
+class TestEmailMobileUpdateSopRouting:
+    def test_sop_p4_scoped_to_otp_not_received_only(self):
+        assert "Covers ONLY users who explicitly report not receiving the OTP" in PROFILE_USER_MANAGEMENT_SYSTEM_PROMPT
+
+    def test_sop_p4_points_other_requests_to_sop_a2(self):
+        assert "is SOP-A2 below,\nnot this SOP." in PROFILE_USER_MANAGEMENT_SYSTEM_PROMPT
+
+    def test_sop_a2_points_otp_not_received_to_sop_p4(self):
+        assert "EXCEPTION: a user who explicitly\nreports not receiving the OTP is SOP-P4 above instead" in PROFILE_USER_MANAGEMENT_SYSTEM_PROMPT
