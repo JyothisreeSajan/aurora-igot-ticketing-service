@@ -94,3 +94,50 @@ def find_mdo_contact_by_channel(
     approach as find_mdo_contact, filtered by channel instead of rootOrgId.
     """
     return _find_mdo_contact(url, headers, {"channel": channel}, timeout=timeout)
+
+
+def build_mdo_details_response(admin: dict | None, match_count: int, root_org_id: str) -> dict:
+    """Build the get_mdo_details response dict from a find_mdo_contact result.
+
+    Shared by login_issue_tool.get_mdo_details and ca_apar_tool.get_mdo_details.
+    admin=None produces the not-found shape; otherwise the full
+    admins/_spoc_replacements shape with masked contact placeholder tokens.
+    """
+    if admin is None:
+        return {
+            "root_org_id": root_org_id,
+            "found": False,
+            "message": f"No active MDO Admin found for organisation '{root_org_id}'.",
+        }
+
+    pd = admin.get("profileDetails", {})
+    personal = pd.get("personalDetails", {})
+
+    real_name = personal.get("firstname", "MDO Admin")
+    real_email = personal.get("primaryEmail", "")
+
+    spoc_replacements = {}
+    if real_name:
+        spoc_replacements["{{MDO_ADMIN_NAME}}"] = real_name
+    if real_email:
+        spoc_replacements["{{MDO_ADMIN_EMAIL}}"] = real_email
+
+    admins = [
+        {
+            "rootOrgName":            admin.get("rootOrgName", ""),
+            "rootOrgId":              admin.get("rootOrgId", ""),
+            "mdo_admin_name":         "{{MDO_ADMIN_NAME}}",
+            "mdo_admin_email":        "{{MDO_ADMIN_EMAIL}}",
+            "ministryOrStateOrgName": pd.get("ministryOrStateOrgName", ""),
+            "ministryOrStateType":    pd.get("ministryOrStateType", ""),
+            "profileStatus":          pd.get("profileStatus", ""),
+        }
+    ]
+
+    return {
+        "root_org_id": root_org_id,
+        "found":       True,
+        "count":       match_count,
+        "admins":      admins,
+        "_spoc_replacements": spoc_replacements,
+    }

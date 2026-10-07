@@ -32,7 +32,7 @@ from app.core.tools.course_tools import get_access_settings
 from app.core.tools.login_issue_tool import get_yp_am_details
 from app.core.tools.profile_update_tool import get_user_profile
 from app.core.utils.config import IGOT_API_HOST_URL, IGOT_KEY
-from app.core.utils.mdo_lookup import find_mdo_contact
+from app.core.utils.mdo_lookup import build_mdo_details_response, find_mdo_contact
 
 logger = logging.getLogger(__name__)
 
@@ -634,48 +634,7 @@ def get_mdo_details(email: str) -> str:
             })
 
         admin, _matched_role, match_count = find_mdo_contact(url, headers, root_org_id, timeout=10)
-        if admin is None:
-            return json.dumps({
-                "root_org_id": root_org_id,
-                "found": False,
-                "message": f"No active MDO Admin found for organisation '{root_org_id}'.",
-            })
-
-        pd = admin.get("profileDetails", {})
-        personal = pd.get("personalDetails", {})
-
-        real_name = personal.get("firstname", "MDO Admin")
-        real_email = personal.get("primaryEmail", "")
-        real_mobile = str(personal.get("mobile", ""))
-
-        spoc_replacements = {}
-        if real_name:
-            spoc_replacements["{{MDO_ADMIN_NAME}}"] = real_name
-        if real_email:
-            spoc_replacements["{{MDO_ADMIN_EMAIL}}"] = real_email
-        if real_mobile:
-            spoc_replacements["{{MDO_ADMIN_MOBILE}}"] = real_mobile
-
-        admins = [
-            {
-                "rootOrgName":            admin.get("rootOrgName", ""),
-                "rootOrgId":              admin.get("rootOrgId", ""),
-                "mdo_admin_name":         "{{MDO_ADMIN_NAME}}",
-                "mdo_admin_email":        "{{MDO_ADMIN_EMAIL}}",
-                "mdo_admin_mobile":       "{{MDO_ADMIN_MOBILE}}",
-                "ministryOrStateOrgName": pd.get("ministryOrStateOrgName", ""),
-                "ministryOrStateType":    pd.get("ministryOrStateType", ""),
-                "profileStatus":          pd.get("profileStatus", ""),
-            }
-        ]
-
-        return json.dumps({
-            "root_org_id": root_org_id,
-            "found":       True,
-            "count":       match_count,
-            "admins":      admins,
-            "_spoc_replacements": spoc_replacements,
-        })
+        return json.dumps(build_mdo_details_response(admin, match_count, root_org_id))
 
     except Exception as e:
         return _fetch_error_response(email, e)
