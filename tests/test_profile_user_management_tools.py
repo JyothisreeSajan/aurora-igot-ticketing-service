@@ -687,6 +687,15 @@ class TestGetUserEhrmsDetails:
 
 
 # ── SOP-P12 STEP 1 — get_profile_completion_details ─────────────────────────
+# Two-step lookup: POST search (email -> user_id) then GET read (user_id ->
+# full profile). Search is mocked via requests.post, read via requests.get.
+
+def _read_response(payload):
+    resp = MagicMock()
+    resp.raise_for_status.return_value = None
+    resp.json.return_value = {"result": {"response": payload}}
+    return resp
+
 
 class TestGetProfileCompletionDetails:
     @patch("app.core.tools.profile_user_management_tools.requests.post")
@@ -698,44 +707,83 @@ class TestGetProfileCompletionDetails:
         assert result["found"] is False
 
     @patch("app.core.tools.profile_user_management_tools.requests.post")
-    def test_mandatory_fields_complete(self, mock_post):
-        user = {
+    def test_user_id_missing(self, mock_post):
+        mock_post.return_value = _search_response([{"firstName": "Asha"}])
+
+        result = json.loads(get_profile_completion_details.func("asha@x.com"))
+
+        assert result["found"] is False
+        assert result["message"] == "User id not available in profile."
+
+    @patch("app.core.tools.profile_user_management_tools.requests.get")
+    @patch("app.core.tools.profile_user_management_tools.requests.post")
+    def test_all_fields_complete(self, mock_post, mock_get):
+        mock_post.return_value = _search_response([{"id": "user-1"}])
+        mock_get.return_value = _read_response({
             "firstName": "Asha",
+            "profileCompletionPercentage": 100,
             "profileDetails": {
-                "mandatoryFieldsExists": True,
                 "profileImageUrl": "https://example.com/photo.png",
-                "professionalDetails": [{"group": "Group A", "designation": "Section Officer"}],
+                "profileBannerUrl": "https://example.com/banner.png",
+                "verifiedKarmayogi": "true",
+                "employmentDetails": {"aboutme": "I work in govt."},
+                "profileDesignationStatus": "VERIFIED",
+                "profileGroupStatus": "VERIFIED",
             },
-        }
-        mock_post.return_value = _search_response([user])
+        })
 
         result = json.loads(get_profile_completion_details.func("asha@x.com"))
 
         assert result["found"] is True
-        assert result["mandatory_fields_exists"] is True
+        assert result["profile_completion_percentage"] == 100
         assert result["profile_photo_set"] is True
-        assert result["group"] == "Group A"
-        assert result["designation"] == "Section Officer"
+        assert result["cover_photo_set"] is True
+        assert result["profile_verification_verified"] is True
+        assert result["about_me_set"] is True
+        assert result["designation_verified"] is True
+        assert result["group_verified"] is True
 
+    @patch("app.core.tools.profile_user_management_tools.requests.get")
     @patch("app.core.tools.profile_user_management_tools.requests.post")
-    def test_mandatory_fields_incomplete_reports_which_are_missing(self, mock_post):
-        user = {
+    def test_fields_incomplete_reports_which_are_missing(self, mock_post, mock_get):
+        mock_post.return_value = _search_response([{"id": "user-2"}])
+        mock_get.return_value = _read_response({
             "firstName": "Ravi",
+            "profileCompletionPercentage": 66.8,
             "profileDetails": {
-                "mandatoryFieldsExists": False,
                 "profileImageUrl": None,
-                "professionalDetails": [{"group": None, "designation": None}],
+                "profileBannerUrl": None,
+                "verifiedKarmayogi": None,
+                "employmentDetails": {},
+                "profileDesignationStatus": "NOT-VERIFIED",
+                "profileGroupStatus": "NOT-VERIFIED",
             },
-        }
-        mock_post.return_value = _search_response([user])
+        })
 
         result = json.loads(get_profile_completion_details.func("ravi@x.com"))
 
         assert result["found"] is True
-        assert result["mandatory_fields_exists"] is False
+        assert result["profile_completion_percentage"] == 66.8
         assert result["profile_photo_set"] is False
-        assert result["group"] is None
-        assert result["designation"] is None
+        assert result["cover_photo_set"] is False
+        assert result["profile_verification_verified"] is False
+        assert result["about_me_set"] is False
+        assert result["designation_verified"] is False
+        assert result["group_verified"] is False
+
+    @patch("app.core.tools.profile_user_management_tools.requests.get")
+    @patch("app.core.tools.profile_user_management_tools.requests.post")
+    def test_verified_karmayogi_string_false_treated_as_not_verified(self, mock_post, mock_get):
+        mock_post.return_value = _search_response([{"id": "user-3"}])
+        mock_get.return_value = _read_response({
+            "firstName": "Meera",
+            "profileCompletionPercentage": 90,
+            "profileDetails": {"verifiedKarmayogi": "false"},
+        })
+
+        result = json.loads(get_profile_completion_details.func("meera@x.com"))
+
+        assert result["profile_verification_verified"] is False
 
     @patch("app.core.tools.profile_user_management_tools.requests.post")
     def test_exception_is_handled(self, mock_post):
