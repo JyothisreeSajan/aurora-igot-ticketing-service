@@ -43,11 +43,10 @@ Covers SOP workflows from Agent_SOP_Profile_User_Management.md:
                                      YP/SPOC fallback
 
   SOP-P12 Profile Update - Profile Completion Not Showing 100%
-          get_profile_completion_details -> STEP 1 mandatory_fields_exists
-                                     overall flag, plus Profile Photo/Group/
-                                     Designation individually (Cover Photo,
-                                     About Me, Username tick are not exposed
-                                     by this API at all)
+          get_profile_completion_details -> STEP 1 profile_completion_percentage
+                                     + Profile Photo / Cover Photo / Profile
+                                     Verification / About Me / Designation /
+                                     Group (two-step: search then read)
 
   SOP-P8  Profile Update - Service History Update
           get_own_profile_details (alias get_user_profile) -> STEP 1 current
@@ -628,33 +627,15 @@ def get_user_root_org_id(email: str) -> str:
     confirmed in STEP 1 — resolves email -> user_id via the standard search,
     then reads the full user profile for rootOrgId.
     """
-    search_url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
-    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
-    try:
-        search_payload = {"request": {"filters": {"email": email}}}
-        search_resp = requests.post(search_url, json=search_payload, headers=headers, timeout=10)
-        search_resp.raise_for_status()
-        content = search_resp.json().get("result", {}).get("response", {}).get("content", [])
-        if not content:
-            return json.dumps({"found": False, "message": USER_PROFILE_NOT_FOUND_MESSAGE})
+    user_id, user_data, error = _fetch_user_id_and_profile_or_error(email)
+    if error:
+        return error
 
-        user_id = content[0].get("id")
-        if not user_id:
-            return json.dumps({"found": False, "message": "User id not available in profile."})
+    root_org_id = user_data.get("rootOrgId")
+    if not root_org_id:
+        return json.dumps({"found": False, "message": "rootOrgId not available for this user."})
 
-        read_url = f"{IGOT_API_HOST_URL}/api/user/private/v1/read/{user_id}"
-        read_resp = requests.get(read_url, headers=headers, timeout=10)
-        read_resp.raise_for_status()
-        user_data = read_resp.json().get("result", {}).get("response", {})
-
-        root_org_id = user_data.get("rootOrgId")
-        if not root_org_id:
-            return json.dumps({"found": False, "message": "rootOrgId not available for this user."})
-
-        return json.dumps({"found": True, "user_id": user_id, "root_org_id": root_org_id})
-    except Exception as e:
-        logger.error(f"[profile_user_management_tools] get_user_root_org_id error: {e}")
-        return json.dumps({"found": False, "error": str(e)})
+    return json.dumps({"found": True, "user_id": user_id, "root_org_id": root_org_id})
 
 
 @tool
@@ -895,6 +876,44 @@ def _fetch_own_profile_or_error(email: str) -> tuple[dict | None, str | None]:
                                   "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email}})
 
 
+# ── Shared helper — SOP-P3 / SOP-P12 own-profile lookup via Read API ───────
+# Both SOPs need fields the Search API doesn't expose (rootOrgId reliably;
+# profileCompletionPercentage / verifiedKarmayogi not at all) — so both
+# resolve email -> user_id via Search, then fetch the full profile via Read.
+# Factored out to avoid duplicating that two-call shape between them.
+
+def _fetch_user_id_and_profile_or_error(email: str) -> tuple[str | None, dict | None, str | None]:
+    """Resolve email -> user_id via the User Search API, then fetch the full
+    profile via the User Read API.
+
+    Returns (user_id, profile_dict, None) on success, or (None, None,
+    json_error_string) if the user/id wasn't found or an API call failed —
+    callers return that error string directly.
+    """
+    search_url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
+    headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
+    try:
+        search_payload = {"request": {"filters": {"email": email}}}
+        search_resp = requests.post(search_url, json=search_payload, headers=headers, timeout=10)
+        search_resp.raise_for_status()
+        content = search_resp.json().get("result", {}).get("response", {}).get("content", [])
+        if not content:
+            return None, None, json.dumps({"found": False, "message": USER_PROFILE_NOT_FOUND_MESSAGE})
+
+        user_id = content[0].get("id")
+        if not user_id:
+            return None, None, json.dumps({"found": False, "message": "User id not available in profile."})
+
+        read_url = f"{IGOT_API_HOST_URL}/api/user/private/v1/read/{user_id}"
+        read_resp = requests.get(read_url, headers=headers, timeout=10)
+        read_resp.raise_for_status()
+        user_data = read_resp.json().get("result", {}).get("response", {})
+        return user_id, user_data, None
+    except Exception as e:
+        logger.error(f"[profile_user_management_tools] _fetch_user_id_and_profile_or_error error: {e}")
+        return None, None, json.dumps({"found": False, "error": str(e)})
+
+
 # ── SOP-P7 — Date of Retirement Update ───────────────────────────────────────
 
 @tool
@@ -935,36 +954,45 @@ def get_profile_completion_details(email: str) -> str:
     """Check which mandatory profile fields are set, for a user reporting their
     profile completion isn't showing 100%.
 
-    Used in SOP-P12 STEP 1. The User Search API exposes an overall
-    `mandatoryFieldsExists` flag (true = every mandatory field the platform
-    tracks is complete) plus three fields we can check individually — Profile
-    Photo, Group, and Designation. Cover Photo, About Me, and the Username
-    Verification tick are NOT exposed anywhere in this API's response (confirmed
-    via live UAT inspection) — there is no field for them to check.
+    Used in SOP-P12 STEP 1. Two-step lookup: search by email to get user_id,
+    then read the full profile via the User Read API.
 
-    Field mapping (confirmed via live UAT inspection):
-      Profile Photo  -> profileDetails.profileImageUrl (present = set)
-      Group          -> profileDetails.professionalDetails[0].group
-      Designation    -> profileDetails.professionalDetails[0].designation
+    Field mapping (from GET /api/user/private/v1/read/{user_id}):
+      profile_completion_percentage -> profileCompletionPercentage
+      Profile Photo                 -> profileDetails.profileImageUrl (present = set)
+      Cover Photo                   -> profileDetails.profileBannerUrl (present = set)
+      Profile Verification          -> profileDetails.verifiedKarmayogi ("False" or falsy = not verified)
+      About Me                      -> profileDetails.employmentDetails.aboutme (present = set)
+      Designation                   -> profileDetails.profileDesignationStatus ("VERIFIED" = done)
+      Group                         -> profileDetails.profileGroupStatus ("VERIFIED" = done)
     """
-    user, error = _fetch_own_profile_or_error(email)
-    if error:
-        return error
+    try:
+        user_id, user_data, error = _fetch_user_id_and_profile_or_error(email)
+        if error:
+            return error
 
-    profile_details = user.get("profileDetails") or {}
-    prof_list = profile_details.get("professionalDetails")
-    prof_details = prof_list[0] if isinstance(prof_list, list) and prof_list else {}
+        profile_details = user_data.get("profileDetails") or {}
+        employment = profile_details.get("employmentDetails") or {}
+        verified_karmayogi = profile_details.get("verifiedKarmayogi")
 
-    return json.dumps({
-        "email": USER_EMAIL_PLACEHOLDER,
-        "found": True,
-        "firstName": user.get("firstName"),
-        "mandatory_fields_exists": bool(profile_details.get("mandatoryFieldsExists")),
-        "profile_photo_set": bool(profile_details.get("profileImageUrl")),
-        "group": prof_details.get("group") or None,
-        "designation": prof_details.get("designation") or None,
-        "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
-    })
+        return json.dumps({
+            "email": USER_EMAIL_PLACEHOLDER,
+            "found": True,
+            "firstName": user_data.get("firstName"),
+            "profile_completion_percentage": user_data.get("profileCompletionPercentage"),
+            "profile_photo_set": bool(profile_details.get("profileImageUrl")),
+            "cover_photo_set": bool(profile_details.get("profileBannerUrl")),
+            "profile_verification_verified": bool(
+                verified_karmayogi and str(verified_karmayogi).lower() != "false"
+            ),
+            "about_me_set": bool(employment.get("aboutme")),
+            "designation_verified": profile_details.get("profileDesignationStatus") == "VERIFIED",
+            "group_verified": profile_details.get("profileGroupStatus") == "VERIFIED",
+            "_spoc_replacements": {USER_EMAIL_PLACEHOLDER: email},
+        })
+    except Exception as e:
+        logger.error(f"[profile_user_management_tools] get_profile_completion_details error: {e}")
+        return json.dumps({"found": False, "error": str(e)})
 
 
 # ── Convenience list for the subgraph ─────────────────────────────────────────
