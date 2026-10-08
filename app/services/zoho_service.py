@@ -8,6 +8,7 @@ Handles:
   - In-memory token caching with expiry check
   - Fetching full Zoho Desk ticket details (HTML body stripped to plain text)
   - Creating draft replies (HIL workflow — nothing is sent to the customer)
+  - Adding private (agent-only) comments to explain why no draft was created
 
 Custom exceptions:
   - ZohoAPIError   : base exception for all Zoho API failures
@@ -17,6 +18,7 @@ Environment variables required (optional — Zoho integration is optional):
   ZOHO_CLIENT_ID, ZOHO_CLIENT_SECRET, ZOHO_REFRESH_TOKEN, ZOHO_ORG_ID,
   ZOHO_FROM_ADDRESS (defaults to mission.karmayogi@gov.in)
 """
+import asyncio
 import logging
 import re
 import time
@@ -190,6 +192,90 @@ async def create_draft_reply(ticket_id: str, content: str, to: str) -> dict:
         f"draft_id={result.get('id')} status={result.get('status')}"
     )
     return result
+
+
+async def get_ticket_comments(ticket_id: str) -> list:
+    """Returns the comments on a Zoho Desk ticket (first page, up to 100)."""
+    access_token = await get_valid_access_token()
+
+    headers = {
+        "orgId":         ZOHO_ORG_ID,
+        "Authorization": f"Zoho-oauthtoken {access_token}",
+    }
+    url = f"{ZOHO_DESK_URL}/api/v1/tickets/{ticket_id}/comments"
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.get(url, headers=headers, params={"limit": 100})
+
+    # Zoho returns 204 (no body) when the ticket has no comments
+    if response.status_code == 204:
+        return []
+    if response.status_code >= 400:
+        raise ZohoAPIError(f"get comments {response.status_code}: {response.text}")
+
+    return response.json().get("data", [])
+
+
+async def add_private_comment(
+    ticket_id: str,
+    content: str,
+    skip_if_exists: bool = True,
+    max_attempts: int = 3,
+) -> dict:
+    """
+    Adds a PRIVATE (agent-only, isPublic=False) comment to a Zoho Desk ticket.
+
+    The customer never sees it; it only tells the L1 agent what the AI did.
+
+    Args:
+        ticket_id      : Zoho internal ticket ID
+        content        : comment body (HTML)
+        skip_if_exists : if a comment with the same content is already on the
+                         ticket, do nothing (avoids duplicates on reprocessing)
+        max_attempts   : retries for the POST before raising ZohoAPIError
+
+    Returns:
+        Zoho API response dict, or {"skipped": True, ...} for a duplicate.
+    """
+    if skip_if_exists:
+        try:
+            existing = await get_ticket_comments(ticket_id)
+            if any((c.get("content") or "").strip() == content.strip() for c in existing):
+                logger.info(f"[zoho] Comment already present on ticket {ticket_id}. Skipping.")
+                return {"skipped": True, "reason": "duplicate_comment"}
+        except Exception as e:
+            # Can't verify — better to risk a duplicate than lose the note
+            logger.warning(f"[zoho] Could not check existing comments for ticket {ticket_id}: {e}")
+
+    body = {"isPublic": False, "contentType": "html", "content": content}
+    url = f"{ZOHO_DESK_URL}/api/v1/tickets/{ticket_id}/comments"
+
+    last_error = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            access_token = await get_valid_access_token()
+            headers = {
+                "orgId":         ZOHO_ORG_ID,
+                "Authorization": f"Zoho-oauthtoken {access_token}",
+                "Content-Type":  "application/json",
+            }
+            logger.info(f"[zoho] Adding private comment to ticket {ticket_id} (attempt {attempt}/{max_attempts})")
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.post(url, headers=headers, json=body)
+
+            if response.status_code >= 400:
+                raise ZohoAPIError(f"comment {response.status_code}: {response.text}")
+
+            result = response.json()
+            logger.info(f"[zoho] Comment added to ticket {ticket_id}: id={result.get('id')}")
+            return result
+        except Exception as e:
+            last_error = e
+            logger.warning(f"[zoho] Comment attempt {attempt}/{max_attempts} failed for ticket {ticket_id}: {e}")
+            if attempt < max_attempts:
+                await asyncio.sleep(attempt)  # 1s, 2s backoff
+
+    raise ZohoAPIError(f"Could not add comment to ticket {ticket_id}: {last_error}")
 
 
 def extract_email_body(html_content: str, strip_signature: bool = True, strip_disclaimer: bool = True) -> str:

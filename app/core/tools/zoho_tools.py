@@ -8,6 +8,8 @@ Functions called directly by graph nodes:
                                 the L1/HIL agent can review and send it.
                                 Nothing is sent to the customer automatically.
                                 No ticket status is changed.
+  - add_zoho_ticket_comment   : adds a PRIVATE comment explaining why no draft
+                                was created (e.g. category out of scope).
 """
 import asyncio
 import logging
@@ -122,3 +124,44 @@ def update_zoho_ticket_direct(
     except Exception as e:
         logger.error(f"[zoho_tools] Unexpected error for ticket {ticket_id}: {e}")
         return ""
+
+
+OUT_OF_SCOPE_COMMENT = (
+    "The user's message is out of scope for the Aurora agent (category not "
+    "enabled), so no draft reply was created. Please review the ticket and "
+    "assist the user."
+)
+
+
+def add_zoho_ticket_comment(ticket_id: str, content: str) -> bool:
+    """
+    Adds a private comment to the Zoho ticket (retried, duplicate-safe).
+    Never raises — a failed comment must not break the ticket flow.
+    Returns True if the comment was added or already present.
+    """
+    if not ENABLE_ZOHO_TICKET_UPDATE:
+        logger.info(
+            f"[zoho_tools] Zoho ticket update disabled by ENABLE_ZOHO_TICKET_UPDATE "
+            f"feature flag. Skipping comment for ticket {ticket_id}."
+        )
+        return False
+
+    from app.services.zoho_service import add_private_comment
+
+    try:
+        try:
+            asyncio.get_running_loop()
+            in_loop = True
+        except RuntimeError:
+            in_loop = False
+
+        if in_loop:
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                pool.submit(asyncio.run, add_private_comment(ticket_id, content)).result(timeout=60)
+        else:
+            asyncio.run(add_private_comment(ticket_id, content))
+        return True
+    except Exception as e:
+        logger.error(f"[zoho_tools] Failed to add comment to ticket {ticket_id}: {e}")
+        return False
