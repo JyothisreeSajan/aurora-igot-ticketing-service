@@ -967,7 +967,7 @@ def get_profile_completion_details(email: str) -> str:
       Group                         -> profileDetails.profileGroupStatus ("VERIFIED" = done)
     """
     try:
-        user_id, user_data, error = _fetch_user_id_and_profile_or_error(email)
+        _user_id, user_data, error = _fetch_user_id_and_profile_or_error(email)
         if error:
             return error
 
