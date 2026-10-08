@@ -172,9 +172,12 @@ def early_exit_node(state: TicketState) -> TicketState:
 
     Intentionally does NOT call notify_user or update_zoho_ticket_direct.
     Zoho draft and tag updates are reserved for the full resolution path only.
-    Only writes the outcome to the tracking index for analytics.
+    Writes the outcome to the tracking index for analytics, and — for the
+    category_disabled case only — adds a private Zoho comment saying the
+    message is out of scope.
     """
     from app.core.tools.ticket_tools import log_ticket_outcome
+    from app.core.tools.zoho_tools import OUT_OF_SCOPE_COMMENT, add_zoho_ticket_comment
     tid = state.get("ticket_id", "unknown")
 
     if state.get("is_category_disabled"):
@@ -199,6 +202,8 @@ def early_exit_node(state: TicketState) -> TicketState:
         outcome=outcome,
     )
     log_ticket_outcome(state, outcome=outcome)
+    if outcome == "category_disabled":
+        add_zoho_ticket_comment(tid, OUT_OF_SCOPE_COMMENT)
     return {
         **state,
         "graph_plan": list(state.get("graph_plan") or []) + [step],

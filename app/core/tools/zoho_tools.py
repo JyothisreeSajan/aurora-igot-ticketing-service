@@ -8,6 +8,8 @@ Functions called directly by graph nodes:
                                 the L1/HIL agent can review and send it.
                                 Nothing is sent to the customer automatically.
                                 No ticket status is changed.
+  - add_zoho_ticket_comment   : adds a PRIVATE comment explaining why no draft
+                                was created (e.g. category out of scope).
 """
 import asyncio
 import logging
@@ -15,6 +17,22 @@ import logging
 from app.core.utils.constants import ENABLE_ZOHO_TICKET_UPDATE
 
 logger = logging.getLogger(__name__)
+
+
+def _run_coro_sync(coro, timeout: float):
+    """
+    Run an async coroutine from sync code. Graph nodes are sync, so use a
+    fresh event loop — or a worker thread if one is already running here
+    (e.g. called from an async node).
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        return pool.submit(asyncio.run, coro).result(timeout=timeout)
 
 
 def update_zoho_ticket_direct(
@@ -95,19 +113,7 @@ def update_zoho_ticket_direct(
 
     try:
         # Graph nodes are sync; run the async draft call in a new event loop
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop and loop.is_running():
-            # Already inside an async context (e.g. called from an async node)
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                future = pool.submit(asyncio.run, _run())
-                result = future.result(timeout=30)
-        else:
-            result = asyncio.run(_run())
+        result = _run_coro_sync(_run(), timeout=30)
 
         draft_id = result.get("id", "unknown")
         logger.info(
@@ -122,3 +128,33 @@ def update_zoho_ticket_direct(
     except Exception as e:
         logger.error(f"[zoho_tools] Unexpected error for ticket {ticket_id}: {e}")
         return ""
+
+
+OUT_OF_SCOPE_COMMENT = (
+    "The user's message is out of scope for the Aurora agent (category not "
+    "enabled), so no draft reply was created. Please review the ticket and "
+    "assist the user."
+)
+
+
+def add_zoho_ticket_comment(ticket_id: str, content: str) -> bool:
+    """
+    Adds a private comment to the Zoho ticket (retried, duplicate-safe).
+    Never raises — a failed comment must not break the ticket flow.
+    Returns True if the comment was added or already present.
+    """
+    if not ENABLE_ZOHO_TICKET_UPDATE:
+        logger.info(
+            f"[zoho_tools] Zoho ticket update disabled by ENABLE_ZOHO_TICKET_UPDATE "
+            f"feature flag. Skipping comment for ticket {ticket_id}."
+        )
+        return False
+
+    from app.services.zoho_service import add_private_comment
+
+    try:
+        _run_coro_sync(add_private_comment(ticket_id, content), timeout=60)
+        return True
+    except Exception as e:
+        logger.error(f"[zoho_tools] Failed to add comment to ticket {ticket_id}: {e}")
+        return False
