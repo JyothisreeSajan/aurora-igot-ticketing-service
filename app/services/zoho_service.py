@@ -38,6 +38,8 @@ from app.core.utils.config import (
 
 logger = logging.getLogger(__name__)
 
+JSON_CONTENT_TYPE = "application/json"
+
 # In-memory token cache
 _cached_token = None
 _token_expires_at = 0.0
@@ -159,7 +161,7 @@ async def create_draft_reply(ticket_id: str, content: str, to: str) -> dict:
     headers = {
         "orgId":         ZOHO_ORG_ID,
         "Authorization": f"Zoho-oauthtoken {access_token}",
-        "Content-Type":  "application/json",
+        "Content-Type":  JSON_CONTENT_TYPE,
     }
 
     body = {
@@ -257,7 +259,7 @@ async def add_private_comment(
             headers = {
                 "orgId":         ZOHO_ORG_ID,
                 "Authorization": f"Zoho-oauthtoken {access_token}",
-                "Content-Type":  "application/json",
+                "Content-Type":  JSON_CONTENT_TYPE,
             }
             logger.info(f"[zoho] Adding private comment to ticket {ticket_id} (attempt {attempt}/{max_attempts})")
             async with httpx.AsyncClient(timeout=15.0) as client:
@@ -351,7 +353,7 @@ async def ensure_aurora_tag(ticket_id: str) -> dict:
     headers = {
         "orgId":         ZOHO_ORG_ID,
         "Authorization": f"Zoho-oauthtoken {access_token}",
-        "Content-Type":  "application/json",
+        "Content-Type":  JSON_CONTENT_TYPE,
     }
 
     # Get existing tags
