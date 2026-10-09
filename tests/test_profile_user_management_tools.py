@@ -561,6 +561,30 @@ class TestCheckContactRegistered:
         assert call_kwargs.kwargs["json"]["request"]["filters"]["phone"] == "9876543210"
 
     @patch("app.core.tools.profile_user_management_tools.requests.post")
+    def test_registered_email_exposes_new_contact_token_for_unmasking(self, mock_post):
+        mock_post.return_value = _search_response([{"id": "user-2"}])
+
+        result = json.loads(check_contact_registered.func("  taken@x.com "))
+
+        assert result["_spoc_replacements"] == {"{{NEW_CONTACT}}": "taken@x.com"}
+
+    @patch("app.core.tools.profile_user_management_tools.requests.post")
+    def test_registered_mobile_exposes_new_contact_token_for_unmasking(self, mock_post):
+        mock_post.return_value = _search_response([{"id": "user-3"}])
+
+        result = json.loads(check_contact_registered.func("9876543210"))
+
+        assert result["_spoc_replacements"] == {"{{NEW_CONTACT}}": "9876543210"}
+
+    @patch("app.core.tools.profile_user_management_tools.requests.post")
+    def test_not_registered_has_no_token(self, mock_post):
+        mock_post.return_value = _search_response([])
+
+        result = json.loads(check_contact_registered.func("free@x.com"))
+
+        assert "_spoc_replacements" not in result
+
+    @patch("app.core.tools.profile_user_management_tools.requests.post")
     def test_not_registered(self, mock_post):
         mock_post.return_value = _search_response([])
 
