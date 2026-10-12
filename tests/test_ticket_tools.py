@@ -1,17 +1,26 @@
 """
-Unit tests for notify_user in app/core/tools/ticket_tools.py — the placeholder
-unmasking applied just before the Zoho draft is created.
+Unit tests for app/core/tools/ticket_tools.py:
+  - notify_user: placeholder unmasking applied just before the Zoho draft is
+    created, and the Zoho draft-vs-private-comment decision.
+  - send_to_human_queue: private Zoho comment on every escalation.
 """
 
 from unittest.mock import patch
 
 import pytest
 
-from app.core.tools.ticket_tools import notify_user
+from app.core.tools.ticket_tools import notify_user, send_to_human_queue
+from app.core.tools.zoho_tools import OUT_OF_SCOPE_COMMENT
 
 
 @pytest.fixture
-def zoho():
+def comment():
+    with patch("app.core.tools.ticket_tools.add_zoho_ticket_comment") as m:
+        yield m
+
+
+@pytest.fixture
+def zoho(comment):
     with patch("app.core.tools.ticket_tools.update_zoho_ticket_direct") as m, \
          patch("app.core.tools.ticket_tools.log_ticket_outcome"):
         yield m
@@ -64,7 +73,57 @@ class TestNotifyUserUnmasking:
 
         assert original == {"{{NEW_CONTACT}}": "x@y.com"}
 
-    def test_escalated_ticket_skips_zoho_draft(self, zoho):
+
+class TestNotifyUserZohoDraftOrComment:
+    def test_resolved_ticket_creates_draft_and_no_comment(self, zoho, comment):
+        notify_user(_state())
+
+        zoho.assert_called_once()
+        comment.assert_not_called()
+
+    def test_escalated_ticket_skips_draft_and_adds_comment(self, zoho, comment):
         notify_user(_state(escalated_to_human=True))
 
         zoho.assert_not_called()
+        comment.assert_called_once_with("T1", OUT_OF_SCOPE_COMMENT)
+
+    def test_unresolved_ticket_skips_draft_and_adds_comment(self, zoho, comment):
+        notify_user(_state(is_resolved=False))
+
+        zoho.assert_not_called()
+        comment.assert_called_once_with("T1", OUT_OF_SCOPE_COMMENT)
+
+    @pytest.mark.parametrize("flag", ["is_junk", "is_category_disabled"])
+    def test_junk_and_disabled_category_get_no_draft_and_no_comment(self, zoho, comment, flag):
+        notify_user(_state(**{flag: True}))
+
+        zoho.assert_not_called()
+        comment.assert_not_called()
+
+    def test_outcome_still_logged_after_comment(self, zoho):
+        with patch("app.core.tools.ticket_tools.log_ticket_outcome") as log:
+            notify_user(_state(escalated_to_human=True))
+
+        log.assert_called_once()
+        assert log.call_args.kwargs["outcome"] == "skipped_zoho"
+
+
+class TestSendToHumanQueue:
+    def test_adds_private_comment_and_never_creates_draft(self, zoho, comment):
+        send_to_human_queue({"ticket_id": "T1", "escalation_reason": "low confidence"})
+
+        comment.assert_called_once_with("T1", OUT_OF_SCOPE_COMMENT)
+        zoho.assert_not_called()
+
+    def test_comment_added_even_without_escalation_reason(self, zoho, comment):
+        send_to_human_queue({"ticket_id": "T1"})
+
+        comment.assert_called_once_with("T1", OUT_OF_SCOPE_COMMENT)
+
+    def test_marks_escalated_and_logs_outcome(self, zoho):
+        with patch("app.core.tools.ticket_tools.log_ticket_outcome") as log:
+            out = send_to_human_queue({"ticket_id": "T1"})
+
+        assert out["escalated_to_human"] is True
+        log.assert_called_once()
+        assert log.call_args.kwargs["outcome"] == "escalated_to_human"
