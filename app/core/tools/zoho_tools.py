@@ -131,9 +131,8 @@ def update_zoho_ticket_direct(
 
 
 OUT_OF_SCOPE_COMMENT = (
-    "The user's message is out of scope for the Aurora agent (category not "
-    "enabled), so no draft reply was created. Please review the ticket and "
-    "assist the user."
+    "This issue is outside the current scope of Aurora. "
+    "Kindly assist the user with their concern."
 )
 
 

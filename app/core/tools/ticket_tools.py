@@ -21,7 +21,11 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 
 from app.core.graph.state import TicketState
-from app.core.tools.zoho_tools import update_zoho_ticket_direct
+from app.core.tools.zoho_tools import (
+    OUT_OF_SCOPE_COMMENT,
+    add_zoho_ticket_comment,
+    update_zoho_ticket_direct,
+)
 from app.core.utils.constants import GraphStage, get_llm_model
 from app.core.utils.es_utils import es_manager
 
@@ -45,10 +49,12 @@ def send_to_human_queue(state: TicketState) -> TicketState:
     #   freshdesk_client.create_ticket(state)
     # ──────────────────────────────────────────────────────────────────────────
 
-    # Zoho is intentionally NOT updated for escalations.
-    # A draft reply is only created when the AI successfully resolves a ticket
-    # in an enabled category — never for human hand-offs.
-    logger.info(f"[human_queue] Skipping Zoho draft for escalated ticket {ticket_id} (HIL hand-off only).")
+    # No draft reply is created for escalations (a draft is only created when
+    # the AI successfully resolves a ticket). Instead, leave a private comment
+    # so the L1 agent knows Aurora could not handle it. Covers every
+    # human_queue path, including silent dead-end hand-offs.
+    logger.info(f"[human_queue] Skipping Zoho draft for escalated ticket {ticket_id}; adding private comment.")
+    add_zoho_ticket_comment(ticket_id, OUT_OF_SCOPE_COMMENT)
 
     log_ticket_outcome(state, outcome="escalated_to_human")
 
@@ -114,6 +120,12 @@ def notify_user(state: TicketState) -> TicketState:
             f"escalated_to_human={state.get('escalated_to_human')}, "
             f"is_resolved={state.get('is_resolved')})"
         )
+        # Whenever the system is unsure (escalated / unresolved) leave a private
+        # comment instead of a draft. Junk and category-disabled tickets never
+        # reach here (early_exit handles them), but are excluded defensively
+        # so category-disabled is not commented twice.
+        if not state.get("is_junk") and not state.get("is_category_disabled"):
+            add_zoho_ticket_comment(ticket_id, OUT_OF_SCOPE_COMMENT)
 
     if state.get("is_category_disabled"):
         outcome = "category_disabled"
