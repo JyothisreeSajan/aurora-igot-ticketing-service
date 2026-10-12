@@ -2,6 +2,8 @@ import pytest
 
 from app.core.utils.recognition_signals import resolve_sop, detect_portals
 from app.core.utils.prompt_templates import (
+    CLASSIFICATION_PROMPT,
+    RE_SOP_RE5,
     RECOGNITION_ENGAGEMENT_SOP_PROMPTS,
     RECOGNITION_ENGAGEMENT_SYSTEM_PROMPT,
 )
@@ -168,3 +170,47 @@ class TestRecognitionEngagementSubgraphHelpers:
         with patch("app.core.graph.subgraphs.base_subgraph.BaseSubgraph.execute_node") as sup:
             sup.return_value = {"tool_results": []}
             assert "user_first_name" not in RecognitionEngagementSubgraph().execute_node({"ticket_id": "t"})
+
+
+# ── SPARROW — prompt regression guards ──────────────────────────────────────
+# Pure prompt-text checks (whitespace-normalised, so line wrapping doesn't
+# matter): a ticket naming SPARROW must classify as recognition_and_engagement
+# even when it also says "APAR", and SOP-RE5's no-APAR reply must keep its
+# agreed template and never expand CAP as anything but Comprehensive
+# Assessment Program.
+
+def _flat(text):
+    return " ".join(text.split())
+
+
+class TestSparrowClassificationRule:
+    def test_sparrow_by_name_always_wins_over_apar_wording(self):
+        text = _flat(CLASSIFICATION_PROMPT)
+        assert "the presence of the word SPARROW by name is what decides this" in text
+
+    def test_apar_carve_out_only_when_no_portal_named(self):
+        text = _flat(CLASSIFICATION_PROMPT)
+        assert "applies ONLY when SPARROW (or another external portal) is NOT named anywhere in the message at all" in text
+
+
+class TestSparrowNoAparTemplate:
+    def test_template_markers_present(self):
+        text = _flat(RE_SOP_RE5)
+        for marker in (
+            "APAR eligibility is based on the designation mapped to your organization.",
+            "there is currently no APAR Training Plan mapped to the designation",
+            "kindly contact your respective department MDO.",
+            "only courses assigned under an APAR/CBP Training Plan will be reflected on the SPARROW portal",
+        ):
+            assert marker in text
+
+    def test_template_has_no_own_greeting_or_signoff(self):
+        # build_email_html wraps every draft with the greeting/sign-off
+        text = _flat(RE_SOP_RE5)
+        assert "Dear Sir/Ma" not in text
+        assert "We hope this email finds you well" not in text
+
+    def test_cap_always_means_comprehensive_assessment_program(self):
+        text = _flat(RE_SOP_RE5)
+        assert 'CAP always means "Comprehensive Assessment Program"' in text
+

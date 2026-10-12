@@ -183,10 +183,16 @@ CRITICAL CLASSIFICATION RULES & PROCESS:
      that team), independent of the specific action being attempted, so do not classify it
      under profile_and_user_management or any other category just because the described action
      (e.g. an email update) matches that category's usual sub-categories.
-   - Similarly, if the message names SPARROW as the external portal where a registration,
-     update, or data-reflection issue occurred (not "APAR Training Plan" visibility within
-     iGOT itself) -> category="recognition_and_engagement", sub_category="Learning Hours Issue
-     - SPARROW / APAR".
+   - Similarly, if the message explicitly names SPARROW as the external portal, this ALWAYS
+     wins -> category="recognition_and_engagement", sub_category="Learning Hours Issue -
+     SPARROW / APAR" — even when the message also says "APAR courses"/"APAR Training Plan"
+     are the thing not reflecting/updating (e.g. "APAR courses are not reflected on SPARROW
+     portal"). Do NOT let the word "APAR" pull this toward ca_apar_issue just because it also
+     appears in that category's own sub-category label — the presence of the word SPARROW by
+     name is what decides this, regardless of which other platform-specific terms (APAR, CAP,
+     Training Plan) appear alongside it. The "not 'APAR Training Plan' visibility within iGOT
+     itself" carve-out below applies ONLY when SPARROW (or another external portal) is NOT
+     named anywhere in the message at all.
    - Apply these overrides ONLY when the message explicitly names Shiksha Path or SPARROW as
      the portal in question — never infer them from a generic profile/email update request
      that doesn't name an external portal.
@@ -1485,6 +1491,9 @@ RE_SOP_RE5 = (
     "SOP-RE5 Learning Hours Issue - SPARROW / APAR\n"
     "=============================================================\n"
     "Covers reports that APAR training/completion data is not reflecting in SPARROW/APAR.\n\n"
+    "CAP always means \"Comprehensive Assessment Program\" in this SOP — never any other\n"
+    "expansion (e.g. never \"Capacity Action Plan\" or similar). If writing it out in full in a\n"
+    "response, use EXACTLY \"Comprehensive Assessment Program (CAP)\".\n\n"
 
     "STEP 1: [TOOL] get_user_profile(email=<user_email>) — also the greeting-name source\n"
     "  for this flow. Read rootOrgName/channel (organization) and profileDetails.profileStatus\n"
@@ -1506,19 +1515,29 @@ RE_SOP_RE5 = (
     "  4.1: Organization/Designation/Group from STEP 1 are for internal routing only (STEP 2's\n"
     "    org-mapping check) — do NOT restate them in the response to the user, in a list or\n"
     "    otherwise, and do NOT ask the user to confirm they're correct. Keep the response\n"
-    "    focused only on the actual course/assessment/CAP status. Proceed directly to 4.2.\n"
+    "    focused only on the actual course/assessment/CAP status. The ONE exception is the\n"
+    "    apar_count == 0 message in 4.2 below, which states the designation and organization\n"
+    "    by design. Proceed directly to 4.2.\n"
     "  4.2: [TOOL] get_user_cbp_plan(email=<user_email>). Read apar_count / apar_plans.\n\n"
 
-    "    apar_count == 0 (APAR/CAP not assigned) -> [TOOL] get_mdo_details(email=<user_email>)\n"
-    "      MDO found -> Resolved. Close. Share the MDO contact (Organization, MDO Name, MDO\n"
-    "        Email ID); tell the user no APAR/CAP is currently assigned to their profile, and\n"
-    "        that only APAR-assigned and successfully completed courses/assessments are\n"
-    "        reflected in SPARROW/APAR.\n"
-    "      MDO not found -> [TOOL] get_yp_am_details(ministry_or_state=<user_profile.ministry>)\n"
-    "        YP/AM found -> Resolved. Close. Share the YP/AM contact (Name, Email ID, Contact\n"
-    "          Number); same \"no APAR/CAP assigned\" message as above.\n"
-    "        YP/AM not found -> escalate=true. Reason: 'No APAR/CAP assigned and neither MDO\n"
-    "          nor YP/AM contact found for the user's organization.'\n\n"
+    "    apar_count == 0 (APAR not assigned) -> [TOOL] get_mdo_details(email=<user_email>)\n"
+    "      MDO found, or MDO not found and [TOOL] get_yp_am_details(ministry_or_state=\n"
+    "      <user_profile.ministry>) found -> Resolved. Close. Use EXACTLY this message (fill\n"
+    "      [Designation] and [Organization Name] from the STEP 1 get_user_profile result;\n"
+    "      [Contact Name]/[Contact Email ID] = the MDO from get_mdo_details if found,\n"
+    "      otherwise the YP/AM from get_yp_am_details — copy the masked placeholder tokens\n"
+    "      exactly as returned, never invent a name/email):\n"
+    "        \"APAR eligibility is based on the designation mapped to your organization.\n\n"
+    "        As per our verification, there is currently no APAR Training Plan mapped to the\n"
+    "        designation \\\"[Designation]\\\" under the organization \\\"[Organization Name]\\\".\n\n"
+    "        To create and assign an APAR Training Plan for your designation, kindly contact\n"
+    "        your respective department MDO.\n\n"
+    "        MDO Name: [Contact Name]\n"
+    "        Email ID: [Contact Email ID]\n\n"
+    "        Please note that only courses assigned under an APAR/CBP Training Plan will be\n"
+    "        reflected on the SPARROW portal after completion 24 hours.\"\n"
+    "      Neither MDO nor YP/AM found -> escalate=true. Reason: 'No APAR assigned and neither\n"
+    "        MDO nor YP/AM contact found for the user's organization.'\n\n"
 
     "    apar_count > 0 (APAR/CAP assigned) -> check whether the user's ticket message names a\n"
     "      specific course:\n\n"
