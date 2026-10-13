@@ -917,3 +917,42 @@ class TestSpocReplacementsAccumulate:
         with patch("app.core.graph.subgraphs.base_subgraph._llm_execute", llm):
             out = _Sub().execute_node({"ticket_id": "t", "email": "a@b.c", "message": "m"})
         assert out["spoc_replacements"]["{{NEW_CONTACT}}"] == "9999999999"
+
+
+# ── SOP-P9 — Educational Qualification add / edit / delete guard ────────────
+# Pure prompt-text checks (whitespace-normalised): the SOP must keep three
+# distinct responses, and deletion/duplicate entries must say deletion is not
+# supported and point to the edit (Pencil icon) steps.
+
+def _flat_text(text):
+    return " ".join(text.split())
+
+
+class TestEducationalQualificationSop:
+    def _sop(self):
+        flat = _flat_text(PROFILE_USER_MANAGEMENT_SYSTEM_PROMPT)
+        return flat[flat.index("SOP-P9"):flat.index("SOP-P10")]
+
+    def test_has_add_edit_and_delete_cases(self):
+        sop = self._sop()
+        for marker in ("Case 1 — Add", "Case 2 — Edit", "Case 3 — Delete"):
+            assert marker in sop
+
+    def test_add_uses_plus_icon_and_add_button(self):
+        sop = self._sop()
+        assert "Click the Plus (+) icon to add a new entry." in sop
+        assert "then click Add to save." in sop
+
+    def test_edit_uses_pencil_icon_and_update_button(self):
+        sop = self._sop()
+        assert "Click the Pencil icon next to the Education Detail entry that you wish to change." in sop
+        assert "then click Update to save." in sop
+
+    def test_delete_says_deletion_not_supported(self):
+        sop = self._sop()
+        assert "the platform currently does not support the deletion of Educational Qualification entries" in sop
+        assert "duplicate/multiple entries" in sop
+
+    def test_no_leftover_mdo_escalation_in_self_service_sop(self):
+        assert "MDO not found" not in self._sop()
+
