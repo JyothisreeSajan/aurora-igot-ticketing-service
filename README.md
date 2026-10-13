@@ -456,3 +456,4 @@ pytest tests/test_pii_masking.py
 - **Tool Output Redaction**: Tools fetching user/organisation data sanitize personal identifiers (`_spoc_replacements`) before returning JSON payloads to the LLM.
 - **Credential Isolation**: All API keys, tokens, and database credentials are managed via environment variables and never logged.
 - **Strict Lifespan Guard**: Service aborts startup if the Presidio PII masking engine fails initialization.
+
