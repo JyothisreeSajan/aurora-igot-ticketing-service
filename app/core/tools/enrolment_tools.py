@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 import requests
 from langchain.tools import tool
 
+from app.core.tools.course_progress_tools import _fetch_enrollments
 from app.core.utils.config import IGOT_API_HOST_URL, IGOT_KEY
 from app.core.utils.helpers import lookup_yp_by_mdo
 from app.core.utils.mdo_lookup import find_mdo_contact
@@ -279,6 +280,7 @@ def search_course_or_program(query: str, email: str) -> str:
             "name":         top.get("name"),
             "status":       top.get("status"),
             "is_moderated": is_moderated,
+            "primary_category": top.get("primaryCategory"),
             "link":         f"{IGOT_API_HOST_URL}/app/toc/{top.get('identifier')}/overview",
         }
         if is_moderated:
@@ -331,6 +333,61 @@ def search_event(query: str, email: str) -> str:
         })
     except Exception as e:
         logger.error(f"[enrolment_tools] search_event error: {e}")
+        return json.dumps({"found": False, "error": str(e)})
+
+
+def _enrolled_name(enrollment: dict) -> str:
+    return (enrollment.get("courseName") or (enrollment.get("content") or {}).get("name") or "").strip().casefold()
+
+
+def _match_enrolled_content(enrollments: list, query: str) -> dict | None:
+    """Match the name a user gave against their enrolled content: an exact
+    case-insensitive title wins; otherwise a partial match in either direction,
+    preferring the title closest in length to the query."""
+    q = (query or "").strip().casefold()
+    if not q:
+        return None
+    exact = [e for e in enrollments if _enrolled_name(e) == q]
+    if exact:
+        return exact[0]
+    partial = [e for e in enrollments if _enrolled_name(e) and (q in _enrolled_name(e) or _enrolled_name(e) in q)]
+    return min(partial, key=lambda e: abs(len(_enrolled_name(e)) - len(q))) if partial else None
+
+
+@tool
+def get_enrolled_content_type(course_name: str, email: str) -> str:
+    """Find the content (course / program / assessment) the user named among
+    their own enrollments and report its primaryCategory.
+
+    Used by ENROLMENT SOP 2 (unenroll request): the platform's Unenroll option
+    exists only for an individual course (primaryCategory "Course"); programs,
+    curated/blended programs and standalone assessments don't have it. Events
+    are not in the enrollment list — use search_event for those.
+
+    Returns: found; when found — name, content_id, primary_category and
+    unenroll_supported (true only for "Course"; null if the category is unknown).
+    """
+    try:
+        user = _fetch_user_record(email)
+        user_id = (user or {}).get("id")
+        if not user_id:
+            return json.dumps({"found": False, "message": USER_PROFILE_NOT_FOUND_MESSAGE})
+
+        match = _match_enrolled_content(_fetch_enrollments(user_id, ["In-Progress", "Completed"]), course_name)
+        if not match:
+            return json.dumps({"found": False, "message": "No enrolled content matches this name."})
+
+        content = match.get("content") or {}
+        category = content.get("primaryCategory")
+        return json.dumps({
+            "found": True,
+            "name": match.get("courseName") or content.get("name"),
+            "content_id": match.get("contentId"),
+            "primary_category": category,
+            "unenroll_supported": (category == "Course") if category else None,
+        })
+    except Exception as e:
+        logger.error(f"[enrolment_tools] get_enrolled_content_type error: {e}")
         return json.dumps({"found": False, "error": str(e)})
 
 
@@ -472,6 +529,7 @@ def get_enrolment_tools() -> list:
         get_user_eligibility_profile,
         search_course_or_program,
         search_event,
+        get_enrolled_content_type,
         check_course_or_event_access,
         get_mdo_admin,
         get_yp_am_contact,

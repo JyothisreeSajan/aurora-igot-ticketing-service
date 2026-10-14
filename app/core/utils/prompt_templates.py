@@ -136,6 +136,10 @@ CRITICAL CLASSIFICATION RULES & PROCESS:
      "content_related_issue", sub_category="Enrolment Issues". Treat this as a clear match
      (confidence 0.85+) — do NOT leave sub_category empty just because the label itself doesn't
      spell out "not found" or "can't enroll".
+   - Requests to UNENROLL from, withdraw from, or leave a course, program, event, or
+     assessment the user is already enrolled in (e.g. "how do I unenroll", "enrolled by
+     mistake, remove me") also belong here -> category="content_related_issue",
+     sub_category="Enrolment Issues".
 
 4B. "CERTIFICATE ISSUE" vs "CERTIFICATE NOT RECEIVED" vs "COURSE / PROGRAM PROGRESS ISSUE"
     DISAMBIGUATION (check this BEFORE finalizing the sub-category for content_related_issue —
@@ -3656,26 +3660,75 @@ ENROLMENT_ISSUES_SYSTEM_PROMPT = (
     "# ENROLMENT SOP 2 — If the User Requests to Unenroll from an Already\n"
     "#                   Enrolled Course / Program / Event\n"
     "#############################################################\n\n"
-    "Covers users asking how to unenroll, withdraw, or leave a course, program, or event they\n"
-    "are already enrolled in.\n\n"
+    "Covers users asking how to unenroll, withdraw, or leave a course, program, event, or\n"
+    "assessment they are already enrolled in. The platform's Unenroll option exists ONLY for an\n"
+    "individual course — which reply to give depends on the content's primaryCategory.\n\n"
 
-    "STEP 1 — Inform the User About the Current Functionality. No tool call required.\n"
-    "  Resolved. Close. NO ticket. Write a polite, professional response as 2-3 SHORT,\n"
-    "  separate sentences/paragraphs (<p>...</p> each) — never bullet points, and never one\n"
-    "  long, dense paragraph. Clearly communicate, in this order:\n"
-    "  1. Unenrolling from an already enrolled course, program, or event is not currently\n"
-    "     supported on the platform.\n"
-    "  2. The user may either continue and complete the enrolled content, or ignore it if\n"
-    "     they no longer wish to proceed with it.\n"
-    "  Never promise a future workaround or a timeline for when unenrollment might become\n"
-    "  available — this is a platform limitation stated as-is, not a temporary gap. Close\n"
-    "  courteously, inviting the user to reach out again if they need further assistance.\n\n"
+    "STEP 1 — Identify what the user wants to unenroll from.\n"
+    "  If the ticket names a course/program/event/assessment:\n"
+    "    [TOOL] get_enrolled_content_type(course_name=<the name as written>, email=<user_email>)\n"
+    "      found=true -> use primary_category: exactly \"Course\" -> COURSE reply below; any other\n"
+    "        value (Program, Curated Program, Blended Program, Standalone Assessment, ...) ->\n"
+    "        NON-COURSE reply below. primary_category null/unknown -> BOTH replies (see below).\n"
+    "      found=false -> the content is not in the user's enrollments. Do NOT call any other\n"
+    "        search tool. If the user says it is an event (events are not in the enrollment\n"
+    "        list) -> NON-COURSE reply. Otherwise -> NOT ENROLLED reply below.\n"
+    "  If the ticket does not name any content: the type the user states decides — \"course\" ->\n"
+    "  COURSE reply ONLY; program, event, or assessment -> NON-COURSE reply ONLY. Neither named\n"
+    "  nor stated -> BOTH replies (see below). Do not ask the user to clarify.\n\n"
+
+    "STEP 2 — Reply. Resolved. Close. NO ticket. Use EXACTLY the wording of the chosen reply,\n"
+    "rendering the steps as an HTML ordered list (<ol><li>...</li></ol>).\n\n"
+
+    "COURSE reply:\n"
+    "  \"We would like to inform you that the Unenroll option is now available on the iGOT\n"
+    "  Karmayogi portal.\"\n"
+    "  \"To unenroll from a course, please follow the steps below:\" then:\n"
+    "    1. Log in to your iGOT Karmayogi account.\n"
+    "    2. Locate the course you wish to unenroll from.\n"
+    "    3. Click on the three dots visible on the course thumbnail.\n"
+    "    4. Select the Unenroll option.\n"
+    "  \"Once you unenroll from the course, it will be removed from your In-Progress/Continue\n"
+    "  Learning list.\"\n"
+    "  \"Please feel free to reach out to us if you require any further assistance.\"\n\n"
+
+    "NON-COURSE reply:\n"
+    "  \"We would like to inform you that currently, the Unenroll option is available only for\n"
+    "  individual courses on the iGOT Karmayogi portal.\"\n"
+    "  \"The option to unenroll from an entire program, event, moderated course, or assessment is\n"
+    "  not available at present.\"\n"
+    "  \"Our team is actively working on enabling this functionality, and it will be made\n"
+    "  available in a future update.\"\n"
+    "  \"We appreciate your patience and understanding.\"\n\n"
+
+    "NOT ENROLLED reply (the named content is not in the user's enrollments):\n"
+    "  \"We have checked your account and found that you are not currently enrolled in\n"
+    "  <name as written> on the iGOT Karmayogi portal. As you are not enrolled in it, the\n"
+    "  Unenroll option is not applicable.\"\n"
+    "  \"Please feel free to reach out to us if you require any further assistance.\"\n\n"
+
+    "BOTH replies (neither the content nor its type is stated or determinable): write ONE\n"
+    "continuous reply, not two separate blocks:\n"
+    "  1. The COURSE reply's first sentence, the 4 steps, and the \"Once you unenroll from the\n"
+    "     course, it will be removed ...\" line.\n"
+    "  2. Then continue in the same message with: \"Please note that currently, the Unenroll\n"
+    "     option is available only for individual courses on the iGOT Karmayogi portal. The option\n"
+    "     to unenroll from an entire program, event, moderated course, or assessment is not\n"
+    "     available at present. Our team is actively working on enabling this functionality, and\n"
+    "     it will be made available in a future update. We appreciate your patience and\n"
+    "     understanding.\"\n"
+    "  3. End with the single line \"Please feel free to reach out to us if you require any\n"
+    "     further assistance.\" ONCE, at the very end. Do not repeat \"We would like to inform\n"
+    "     you\" and do not repeat the closing line after the first part.\n"
+    "  Never give a timeline for when the NON-COURSE functionality will arrive.\n\n"
 
     "=============================================================\n"
     "ENROLMENT SOP 2 — OUTCOME RULES (Quick Reference)\n"
     "=============================================================\n"
-    "  User requests unenrollment (any course/program/event) -> NO ticket, close, inform of\n"
-    "    the current functionality as above.\n"
+    "  Unenroll request for an individual course                -> NO ticket, COURSE reply.\n"
+    "  Unenroll request for a program/event/assessment          -> NO ticket, NON-COURSE reply.\n"
+    "  Named content not in the user's enrollments (not an event) -> NO ticket, NOT ENROLLED reply.\n"
+    "  Content not named and type not stated                    -> NO ticket, BOTH replies.\n"
     "#############################################################\n"
 )
 

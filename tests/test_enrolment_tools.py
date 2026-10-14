@@ -8,6 +8,10 @@ course, or event).
 import json
 from unittest.mock import MagicMock, patch
 
+from app.core.utils.prompt_templates import (
+    CLASSIFICATION_PROMPT,
+    ENROLMENT_ISSUES_SYSTEM_PROMPT,
+)
 from app.core.tools.enrolment_tools import (
     USER_PROFILE_NOT_FOUND_MESSAGE,
     _check_secure_settings_eligibility,
@@ -16,6 +20,7 @@ from app.core.tools.enrolment_tools import (
     _parse_created_on,
     _select_best_content_match,
     check_course_or_event_access,
+    get_enrolled_content_type,
     get_enrolment_tools,
     get_mdo_admin,
     get_user_eligibility_profile,
@@ -328,6 +333,24 @@ class TestSearchCourseOrProgram:
         assert result["is_moderated"] is False
         assert "metadata_eligible" not in result
         assert result["course_id"] == "c1"
+
+    @patch("app.core.tools.enrolment_tools.requests.get")
+    @patch("app.core.tools.enrolment_tools.requests.post")
+    def test_found_returns_primary_category(self, mock_post, mock_get):
+        course_search = _mock_response({
+            "result": {
+                "content": [{"identifier": "p1", "name": "Intro Program", "status": "Live",
+                             "primaryCategory": "Program"}],
+                "count": 1,
+            }
+        })
+        mock_post.side_effect = [_search_response([{"id": "user-1"}]), course_search]
+        mock_get.return_value = _profile_response()
+
+        result = json.loads(search_course_or_program.func("Intro Program", "user@x.com"))
+
+        assert result["found"] is True
+        assert result["primary_category"] == "Program"
 
     @patch("app.core.tools.enrolment_tools.requests.get")
     @patch("app.core.tools.enrolment_tools.requests.post")
@@ -677,7 +700,148 @@ class TestGetEnrolmentTools:
             "get_user_eligibility_profile",
             "search_course_or_program",
             "search_event",
+            "get_enrolled_content_type",
             "check_course_or_event_access",
             "get_mdo_admin",
             "get_yp_am_contact",
         }
+
+
+# ── get_enrolled_content_type (ENROLMENT SOP 2 — unenroll) ──────────────────
+
+def _enrollment(name, category, content_id="do_1"):
+    return {"courseName": name, "contentId": content_id, "content": {"name": name, "primaryCategory": category}}
+
+
+@patch("app.core.tools.enrolment_tools._fetch_enrollments")
+@patch("app.core.tools.enrolment_tools._fetch_user_record")
+class TestGetEnrolledContentType:
+    def test_course_is_unenroll_supported(self, mock_user, mock_enrol):
+        mock_user.return_value = {"id": "u1"}
+        mock_enrol.return_value = [_enrollment("Intro Course", "Course", "do_9")]
+
+        result = json.loads(get_enrolled_content_type.func("intro course", "u@x.com"))
+
+        assert result["found"] is True
+        assert result["primary_category"] == "Course"
+        assert result["unenroll_supported"] is True
+        assert result["content_id"] == "do_9"
+
+    def test_non_course_categories_are_not_supported(self, mock_user, mock_enrol):
+        mock_user.return_value = {"id": "u1"}
+        for category in ("Program", "Curated Program", "Blended Program", "Standalone Assessment"):
+            mock_enrol.return_value = [_enrollment("Some Content", category)]
+            result = json.loads(get_enrolled_content_type.func("Some Content", "u@x.com"))
+            assert result["primary_category"] == category
+            assert result["unenroll_supported"] is False
+
+    def test_unknown_category_gives_null_support_flag(self, mock_user, mock_enrol):
+        mock_user.return_value = {"id": "u1"}
+        mock_enrol.return_value = [{"courseName": "No Category", "contentId": "x", "content": {}}]
+
+        result = json.loads(get_enrolled_content_type.func("No Category", "u@x.com"))
+
+        assert result["found"] is True
+        assert result["unenroll_supported"] is None
+
+    def test_exact_match_beats_partial_and_partial_works_either_way(self, mock_user, mock_enrol):
+        mock_user.return_value = {"id": "u1"}
+        mock_enrol.return_value = [
+            _enrollment("Python Basics Advanced", "Program"),
+            _enrollment("Python Basics", "Course"),
+        ]
+        exact = json.loads(get_enrolled_content_type.func("python basics", "u@x.com"))
+        assert exact["name"] == "Python Basics"
+
+        mock_enrol.return_value = [_enrollment("Python Basics", "Course")]
+        partial = json.loads(get_enrolled_content_type.func("my Python Basics course", "u@x.com"))
+        assert partial["name"] == "Python Basics"
+
+    def test_name_falls_back_to_content_name_when_course_name_missing(self, mock_user, mock_enrol):
+        mock_user.return_value = {"id": "u1"}
+        mock_enrol.return_value = [{"contentId": "c9", "content": {"name": "Fallback Course", "primaryCategory": "Course"}}]
+
+        result = json.loads(get_enrolled_content_type.func("fallback course", "u@x.com"))
+
+        assert result["found"] is True
+        assert result["name"] == "Fallback Course"
+        assert result["unenroll_supported"] is True
+
+    def test_blank_course_name_finds_nothing(self, mock_user, mock_enrol):
+        mock_user.return_value = {"id": "u1"}
+        mock_enrol.return_value = [_enrollment("Intro Course", "Course")]
+
+        assert json.loads(get_enrolled_content_type.func("   ", "u@x.com"))["found"] is False
+
+    def test_no_match(self, mock_user, mock_enrol):
+        mock_user.return_value = {"id": "u1"}
+        mock_enrol.return_value = [_enrollment("Intro Course", "Course")]
+
+        assert json.loads(get_enrolled_content_type.func("zzz", "u@x.com"))["found"] is False
+
+    def test_user_not_found(self, mock_user, mock_enrol):
+        mock_user.return_value = None
+
+        result = json.loads(get_enrolled_content_type.func("Intro Course", "nobody@x.com"))
+
+        assert result["found"] is False
+        assert result["message"] == USER_PROFILE_NOT_FOUND_MESSAGE
+
+    def test_api_error_is_handled(self, mock_user, mock_enrol):
+        mock_user.side_effect = Exception("boom")
+
+        result = json.loads(get_enrolled_content_type.func("Intro Course", "u@x.com"))
+
+        assert result["found"] is False
+        assert "error" in result
+
+
+class TestUnenrollSopPrompt:
+    def _sop(self):
+        flat = " ".join(ENROLMENT_ISSUES_SYSTEM_PROMPT.split())
+        return flat[flat.index("ENROLMENT SOP 2"):]
+
+    def test_checks_primary_category_via_enrollment_tool(self):
+        sop = self._sop()
+        assert "get_enrolled_content_type" in sop
+        assert 'exactly "Course"' in sop
+
+    def test_course_reply_has_unenroll_steps(self):
+        sop = self._sop()
+        assert "the Unenroll option is now available on the iGOT Karmayogi portal" in sop
+        assert "Click on the three dots visible on the course thumbnail." in sop
+        assert "Select the Unenroll option." in sop
+
+    def test_non_course_reply_wording(self):
+        sop = self._sop()
+        assert "the Unenroll option is available only for individual courses" in sop
+        assert "program, event, moderated course, or assessment is not available at present" in sop
+
+    def test_both_replies_when_content_unknown(self):
+        assert "BOTH replies" in self._sop()
+
+    def test_stated_type_decides_reply_when_no_name(self):
+        sop = self._sop()
+        assert "the type the user states decides" in sop
+        assert "COURSE reply ONLY" in sop
+        assert "NON-COURSE reply ONLY" in sop
+
+    def test_not_enrolled_reply_when_named_content_not_found(self):
+        sop = self._sop()
+        assert "Do NOT call any other search tool" in sop
+        assert "NOT ENROLLED reply" in sop
+        assert "you are not currently enrolled in" in sop
+        assert "the Unenroll option is not applicable" in sop
+        assert "If the user says it is an event" in sop
+
+    def test_combined_reply_is_one_continuous_message(self):
+        sop = self._sop()
+        assert "write ONE continuous reply, not two separate blocks" in sop
+        assert "Please note that currently, the Unenroll option is available only" in sop
+        assert "ONCE, at the very end" in sop
+
+    def test_classification_routes_unenroll_to_enrolment_issues(self):
+        flat = " ".join(CLASSIFICATION_PROMPT.split())
+        assert "Requests to UNENROLL from, withdraw from, or leave" in flat
+        assert 'sub_category="Enrolment Issues"' in flat
+
