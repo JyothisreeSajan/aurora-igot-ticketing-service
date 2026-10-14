@@ -317,8 +317,11 @@ async def get_cleaned_ticket_details(ticket_id: str) -> dict:
     Fetches the details of a specific ticket and returns only the desired fields,
     cleaning HTML out of the description.
     """
-    data = await get_ticket_details(ticket_id)
-    
+    data, email_threads = await asyncio.gather(
+        get_ticket_details(ticket_id),
+        get_ticket_email_threads(ticket_id),
+    )
+
     desired_keys = [
         "modifiedTime", "subject", "departmentId", "channel", 
         "source", "createdTime", "id", "phone", "status", 
@@ -329,7 +332,13 @@ async def get_cleaned_ticket_details(ticket_id: str) -> dict:
     
     if filtered_data.get("description"):
         filtered_data["description"] = extract_email_body(filtered_data["description"])
-        
+
+    filtered_data = _merge_description_with_threads(filtered_data, email_threads)
+
+    # Real email content first so the LLM prioritises it over subject/description
+    if email_threads:
+        filtered_data = {"email_threads": email_threads, **filtered_data}
+
     return filtered_data
 
 
@@ -556,3 +565,144 @@ async def get_ticket_conversations(ticket_id: str, max_turns: int = 7) -> list[d
 
     # Apply sliding window of max_turns
     return parsed_items[-max_turns:]
+
+# ---------------------------------------------------------------------------
+# Email thread bodies (threads list API + per-thread content API)
+# ---------------------------------------------------------------------------
+
+MAX_EMAIL_THREADS = 10
+
+
+async def get_ticket_threads_raw(ticket_id: str, limit: int = 100) -> dict:
+    """Fetches the raw threads list (metadata only, no full content) for a ticket."""
+    access_token = await get_valid_access_token()
+    url = f"{ZOHO_DESK_URL}/api/v1/tickets/{ticket_id}/threads"
+    headers = {
+        "orgId": ZOHO_ORG_ID,
+        "Authorization": f"Zoho-oauthtoken {access_token}"
+    }
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.get(url, params={"limit": limit}, headers=headers)
+        response.raise_for_status()
+        return response.json()
+
+
+async def get_thread_detail_raw(ticket_id: str, thread_id: str) -> dict:
+    """Fetches a single thread including its full HTML `content`."""
+    access_token = await get_valid_access_token()
+    url = f"{ZOHO_DESK_URL}/api/v1/tickets/{ticket_id}/threads/{thread_id}"
+    headers = {
+        "orgId": ZOHO_ORG_ID,
+        "Authorization": f"Zoho-oauthtoken {access_token}"
+    }
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        response = await client.get(url, headers=headers)
+        response.raise_for_status()
+        return response.json()
+
+
+def _norm_text(text: str) -> str:
+    return re.sub(r"\s+", " ", text or "").strip().lower()
+
+
+def _clean_summary(summary: str) -> str:
+    """Zoho truncates summaries with a trailing '...'; drop it before comparing."""
+    return re.sub(r"\.\.\.$", "", (summary or "").strip()).strip()
+
+
+def _is_duplicate(a: str, b: str) -> bool:
+    """True if one text is (after whitespace/case normalisation) contained in the other."""
+    na, nb = _norm_text(a), _norm_text(b)
+    return bool(na and nb and (na in nb or nb in na))
+
+
+def _is_real_thread(item: dict) -> bool:
+    """Keep only sent user/agent email threads; skip drafts and bounces."""
+    if not isinstance(item, dict) or not item.get("id"):
+        return False
+    if str(item.get("status") or "SUCCESS").upper() != "SUCCESS":
+        return False
+    if is_system_or_bounce(item):
+        return False
+    return True
+
+
+async def _fetch_thread_body(ticket_id: str, item: dict) -> dict | None:
+    """Fetches and parses one thread. Returns None if it has no usable text."""
+    direction = str(item.get("direction") or "").lower()
+    role = "user" if direction == "in" else "agent"
+    author = item.get("author") or {}
+    author_name = author.get("name") or ("User" if role == "user" else "Agent")
+
+    content = ""
+    detail_summary = ""
+    try:
+        detail = await get_thread_detail_raw(ticket_id, str(item["id"]))
+        raw = detail.get("content") or ""
+        if "<" in raw and ">" in raw:
+            content = extract_email_body(raw)
+        else:
+            content = raw.strip()
+        detail_summary = _clean_summary(detail.get("summary") or "")
+    except Exception as e:
+        logger.warning(f"[zoho] Failed to fetch thread {item.get('id')} for ticket {ticket_id}: {e}")
+
+    # Priority: detail content -> detail summary -> list summary (possibly truncated)
+    if not content:
+        content = detail_summary or _clean_summary(item.get("summary") or "")
+    if not content:
+        return None
+
+    return {
+        "role": role,
+        "author": f"{author_name} ({'User' if role == 'user' else 'Agent'})",
+        "timestamp": item.get("createdTime") or "",
+        "content": content,
+    }
+
+
+async def get_ticket_email_threads(ticket_id: str, max_threads: int = MAX_EMAIL_THREADS) -> list[dict]:
+    """
+    Returns the latest `max_threads` user/agent email threads with their parsed
+    body text, oldest -> newest. Never raises; returns [] on failure.
+    """
+    try:
+        raw = await get_ticket_threads_raw(ticket_id)
+    except Exception as e:
+        logger.warning(f"[zoho] Failed to fetch threads list for ticket {ticket_id}: {e}")
+        return []
+
+    data = raw.get("data", [])
+    if not isinstance(data, list):
+        return []
+
+    candidates = [t for t in data if _is_real_thread(t)]
+    candidates.sort(key=lambda t: t.get("createdTime") or "")
+    candidates = candidates[-max_threads:]
+
+    results = await asyncio.gather(*(_fetch_thread_body(ticket_id, t) for t in candidates))
+    return [r for r in results if r]
+
+
+def _merge_description_with_threads(ticket: dict, email_threads: list[dict]) -> dict:
+    """
+    Avoid sending the same text twice:
+      - no thread content        -> keep description as is
+      - description is a duplicate of a thread body -> drop description
+      - otherwise                -> keep description (it adds new info)
+    If a thread body is only a truncated summary and the description is longer
+    and contains it, the thread body is upgraded to the description.
+    """
+    description = ticket.get("description") or ""
+    if not description or not email_threads:
+        return ticket
+
+    for t in email_threads:
+        if _is_duplicate(description, t["content"]):
+            # Prefer the longer (more complete) of the two texts, keep in the thread
+            if len(description) > len(t["content"]):
+                t["content"] = description
+            ticket = {**ticket}
+            ticket.pop("description", None)
+            return ticket
+    return ticket
