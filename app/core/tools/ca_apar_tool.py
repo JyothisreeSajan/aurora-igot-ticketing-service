@@ -28,7 +28,6 @@ import logging
 import requests
 from langchain.tools import tool
 
-from app.core.tools.course_tools import get_access_settings
 from app.core.tools.login_issue_tool import get_yp_am_details
 from app.core.tools.profile_update_tool import get_user_profile
 from app.core.utils.config import IGOT_API_HOST_URL, IGOT_KEY
@@ -470,36 +469,10 @@ def get_assessment_attempt_count(email: str, assessment_identifier: str) -> str:
         return json.dumps({"found": False, "error": f"Error fetching assessment attempt count: {e!s}"})
 
 
-# ── SOP-2 CAP Eligibility check ─────────────────────────────────────────────
-# Used together with get_access_settings (reused from course_tools.py) when a
-# user reports being unable to ENROLL in a specific CAP they've named — that
-# tool's eligibility criteria give organisations as raw rootOrgId values, not
-# names, so this resolves them to real org names for the response.
-
-@tool
-def resolve_org_names(org_ids: list[str]) -> str:
-    """Resolve a list of organisation ids (rootOrgId) to their real org names.
-
-    Used in SOP-2 (Unable to Enroll / eligibility check) to turn the raw
-    rootOrgId values returned by get_access_settings' userGroupCriteriaList
-    into human-readable organisation names for the response. Designation
-    criteria need no resolution — those are already plain names.
-    """
-    try:
-        content = _search_org_by_id(org_ids, len(org_ids) or 1)
-        return json.dumps({
-            "org_ids": org_ids,
-            "resolved": [{"id": o.get("id"), "orgName": o.get("orgName")} for o in content],
-        })
-    except Exception as e:
-        logger.error(f"[ca_apar_tool] resolve_org_names error: {e}")
-        return json.dumps({"org_ids": org_ids, "resolved": [], "error": str(e)})
-
-
 # ── SOP-1 STEP 3 — State Government O.M. exemption check ───────────────────
 # The DoPT O.M. mandating APAR Training Plan creation does not apply to State
 # Government officials. Confirmed via live lookup: an org's own record (same
-# /api/org/v1/search-by-id call as resolve_org_names) reliably reports
+# /api/org/v1/search-by-id lookup) reliably reports
 # sbOrgType as "ministry" or "state" — unlike ministryOrStateType, which is
 # inconsistent junk ("SPV" on both real ministries and real states).
 
@@ -652,7 +625,5 @@ def get_ca_apar_tools() -> list:
         get_yp_am_details,
         get_cap_hierarchy,
         get_assessment_attempt_count,
-        get_access_settings,
-        resolve_org_names,
         get_org_type,
     ]

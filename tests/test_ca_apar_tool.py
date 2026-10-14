@@ -18,7 +18,6 @@ from app.core.tools.ca_apar_tool import (
     get_user_cap_assignment,
     get_user_cbp_plan,
     get_user_enrollments,
-    resolve_org_names,
 )
 
 
@@ -318,27 +317,6 @@ class TestGetAssessmentAttemptCount:
         assert "error" in result
 
 
-# ── resolve_org_names (SOP-2) ────────────────────────────────────────────────
-
-class TestResolveOrgNames:
-    @patch("app.core.tools.ca_apar_tool.requests.post")
-    def test_success(self, mock_post):
-        mock_post.return_value = _search_response([{"id": "org-1", "orgName": "Ministry X"}])
-
-        result = json.loads(resolve_org_names.func(["org-1"]))
-
-        assert result["resolved"] == [{"id": "org-1", "orgName": "Ministry X"}]
-
-    @patch("app.core.tools.ca_apar_tool.requests.post")
-    def test_exception_is_handled(self, mock_post):
-        mock_post.side_effect = Exception("timeout")
-
-        result = json.loads(resolve_org_names.func(["org-1"]))
-
-        assert result["resolved"] == []
-        assert "error" in result
-
-
 # ── get_org_type (SOP-1 STEP 3) ──────────────────────────────────────────────
 
 class TestGetOrgType:
@@ -537,8 +515,6 @@ class TestGetCaAparTools:
             "get_yp_am_details",
             "get_cap_hierarchy",
             "get_assessment_attempt_count",
-            "get_access_settings",
-            "resolve_org_names",
             "get_org_type",
         }
 
@@ -555,7 +531,44 @@ class TestCapPromptRouting:
         for marker in ("STEP 3-TRANSFER", "STEP 1A-TRANSFER", "Karmayogi Prarambh Trainee"):
             assert marker in CA_APAR_SYSTEM_PROMPT
 
-    def test_eligibility_vs_not_found_matching_guard_present(self):
+    @staticmethod
+    def _unable_to_enroll_section():
         from app.core.utils.prompt_templates import CA_APAR_SYSTEM_PROMPT
 
-        assert "do not confuse these two outcomes" in CA_APAR_SYSTEM_PROMPT
+        flat = " ".join(CA_APAR_SYSTEM_PROMPT.split())
+        start = flat.index("Comprehensive Assessment Unable to Enroll / Eligibility-Related Issues")
+        return flat[start:flat.index("SOP-2 Outcome Rules")]
+
+    def test_assignment_alone_decides_the_reply(self):
+        section = self._unable_to_enroll_section()
+
+        assert "get_user_cap_assignment" in section
+        assert "Assignment alone decides the reply" in section
+        assert "get_access_settings" not in section
+        assert "resolve_org_names" not in section
+
+    def test_assigned_cap_gets_cap_assigned_message(self):
+        section = self._unable_to_enroll_section()
+
+        assert "If the user named a specific CAP AND it IS assigned" in section
+        assert "the CAP assigned to your profile is" in section
+
+    def test_unassigned_named_cap_gets_eligibility_message_with_org_and_designation(self):
+        section = self._unable_to_enroll_section()
+
+        assert "named a specific CAP but it is NOT assigned to them" in section
+        assert "is accessible only to users belonging to the specific organizations and designations" in section
+        assert "rootOrgName" in section
+        assert "professionalDetails[0].designation" in section
+        assert "User is not eligible to enrol in this course" in section
+
+    def test_generic_assigned_cap_name_inside_longer_name_is_not_a_match(self):
+        section = self._unable_to_enroll_section()
+
+        assert "merely appears INSIDE a longer name the user gave is NOT a match" in section
+
+    def test_no_cap_named_still_asks_for_name_and_link(self):
+        section = self._unable_to_enroll_section()
+
+        assert "If the user did NOT name a specific CAP" in section
+        assert "CAP Name" in section and "CAP Link" in section
