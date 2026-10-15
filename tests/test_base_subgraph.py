@@ -77,7 +77,7 @@ class TestPlanNode:
 
         human_msg = mock_llm.invoke.call_args[0][0][1].content
         assert "CONTINUATION" in human_msg
-        assert "[User]" in human_msg and "[Agent]" in human_msg
+        assert "[User: User]" in human_msg and "[Agent: Support]" in human_msg
         # PII in the historical conversation must also be masked
         assert "old@gov.in" not in human_msg
 
