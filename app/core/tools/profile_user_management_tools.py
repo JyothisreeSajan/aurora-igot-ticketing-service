@@ -115,6 +115,12 @@ def get_user_transfer_request_details(email: str) -> str:
       wfTransferRequest.orgName         -> transfer_org_name
 
     An empty {} wfTransferRequest means no transfer request has been raised.
+
+    Also returns the user's current organisation (root_org_name <- rootOrgName)
+    and profile_status (<- profileDetails.profileStatus): "NOT-MY-USER" marks a
+    revoked-access user (organisation mapped to the iGOT placeholder), "VERIFIED"
+    a verified profile. Some pending requests carry only departmentName, so
+    transfer_root_org_id / transfer_org_name can be None.
     """
     try:
         url = f"{IGOT_API_HOST_URL}/api/private/user/v1/search"
@@ -131,11 +137,15 @@ def get_user_transfer_request_details(email: str) -> str:
         user = content[0]
         wf_transfer = user.get("wfTransferRequest") or {}
         has_transfer_request = bool(wf_transfer)
+        profile_details = user.get("profileDetails")
+        profile_status = profile_details.get("profileStatus") if isinstance(profile_details, dict) else None
 
         return json.dumps({
             "email": USER_EMAIL_PLACEHOLDER,
             "found": True,
             "firstName": user.get("firstName"),
+            "root_org_name": user.get("rootOrgName"),
+            "profile_status": profile_status,
             "has_transfer_request": has_transfer_request,
             "wf_transfer_id": wf_transfer.get("wfId"),
             "transfer_dept_name": wf_transfer.get("departmentName"),
