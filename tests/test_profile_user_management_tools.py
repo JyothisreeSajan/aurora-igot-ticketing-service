@@ -95,6 +95,48 @@ class TestGetUserTransferRequestDetails:
         assert result["wf_transfer_id"] is None
 
     @patch("app.core.tools.profile_user_management_tools.requests.post")
+    def test_returns_org_name_and_profile_status(self, mock_post):
+        user = {
+            "firstName": "Tree",
+            "rootOrgName": "iGoT",
+            "profileDetails": {"profileStatus": "NOT-MY-USER"},
+            "wfTransferRequest": {},
+        }
+        mock_post.return_value = _search_response([user])
+
+        result = json.loads(get_user_transfer_request_details.func("tree@x.com"))
+
+        assert result["root_org_name"] == "iGoT"
+        assert result["profile_status"] == "NOT-MY-USER"
+        assert result["has_transfer_request"] is False
+
+    @patch("app.core.tools.profile_user_management_tools.requests.post")
+    def test_pending_request_with_only_department_name(self, mock_post):
+        user = {
+            "firstName": "Krisp",
+            "rootOrgName": "Dept of Project management",
+            "profileDetails": {"profileStatus": "VERIFIED"},
+            "wfTransferRequest": {"departmentName": "NWDA", "wfId": "wf-9"},
+        }
+        mock_post.return_value = _search_response([user])
+
+        result = json.loads(get_user_transfer_request_details.func("krisp@x.com"))
+
+        assert result["has_transfer_request"] is True
+        assert result["transfer_dept_name"] == "NWDA"
+        assert result["transfer_root_org_id"] is None
+        assert result["profile_status"] == "VERIFIED"
+
+    @patch("app.core.tools.profile_user_management_tools.requests.post")
+    def test_missing_profile_details_gives_no_status(self, mock_post):
+        mock_post.return_value = _search_response([{"firstName": "Ravi", "profileDetails": None}])
+
+        result = json.loads(get_user_transfer_request_details.func("ravi@x.com"))
+
+        assert result["profile_status"] is None
+        assert result["root_org_name"] is None
+
+    @patch("app.core.tools.profile_user_management_tools.requests.post")
     def test_request_exception_is_handled(self, mock_post):
         mock_post.side_effect = Exception("timeout")
 
@@ -955,4 +997,65 @@ class TestEducationalQualificationSop:
 
     def test_no_leftover_mdo_escalation_in_self_service_sop(self):
         assert "MDO not found" not in self._sop()
+
+
+# ── SOP-A1 Access Revoked — prompt regression guards ────────────────────────
+
+class TestAccessRevokedSop:
+    @staticmethod
+    def _sop():
+        from app.core.utils.prompt_templates import PROFILE_USER_MANAGEMENT_SYSTEM_PROMPT
+
+        flat = " ".join(PROFILE_USER_MANAGEMENT_SYSTEM_PROMPT.split())
+        start = flat.index("Covers users who see: \"Your access has been revoked")
+        return flat[start:flat.index("SOP-P1 Profile Update")]
+
+    def test_routes_on_profile_status(self):
+        sop = self._sop()
+
+        assert 'Route on profile_status' in sop
+        assert '"NOT-MY-USER"' in sop and '"VERIFIED"' in sop
+        assert 'Any other value, or missing' in sop
+
+    def test_not_my_user_reply_with_transfer_request_steps(self):
+        sop = self._sop()
+
+        assert "has marked your profile as 'Not My User'" in sop
+        assert "Select Make Transfer Request." in sop
+        assert "Await approval. Access will be restored once the MDO Admin approves" in sop
+
+    def test_profile_verified_reply(self):
+        sop = self._sop()
+
+        assert "your organisation details have already been updated and your profile is verified" in sop
+        assert "please share a screenshot of the error message" in sop
+
+    def test_transfer_request_submitted_reply_uses_target_org_mdo(self):
+        sop = self._sop()
+
+        assert "will be reflected at your end once these are approved by the MDO Admin" in sop
+        assert "Department:" in sop and "MDO Leader Name:" in sop and "Email Id:" in sop
+        assert "search_organization(org_name=<transfer_dept_name>)" in sop
+        assert "never the user's own (revoked) organization" in sop
+
+    def test_profile_not_verified_reply_uses_root_org_name_and_both_paths(self):
+        sop = self._sop()
+
+        assert "[UserOrgName] with root_org_name" in sop
+        assert "If Your Organisation Name Is Correct" in sop
+        assert "If Your Organisation Name Is Incorrect" in sop
+
+    def test_how_to_raise_transfer_request_gets_steps_only(self):
+        sop = self._sop()
+
+        assert "ONLY asks how to raise / make a Transfer Request" in sop
+        assert "HOW-TO reply" in sop
+
+    def test_classification_routes_transfer_request_how_to_to_access_revoked(self):
+        from app.core.utils.prompt_templates import CLASSIFICATION_PROMPT
+
+        flat = " ".join(CLASSIFICATION_PROMPT.split())
+        assert '"ACCESS REVOKED" / TRANSFER REQUEST' in flat
+        assert "how do I raise a Transfer Request?" in flat
+        assert 'sub_category="Access Revoked"' in flat
 
