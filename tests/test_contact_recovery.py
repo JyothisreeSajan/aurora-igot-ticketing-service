@@ -72,3 +72,25 @@ class TestRecoverNewContact:
     def test_empty_message(self):
         assert _recover_new_contact("", owner_email="owner@x.com") is None
         assert _recover_new_contact(None, owner_email="owner@x.com") is None
+
+    def test_phone_hint_prefers_mobile_over_owner_email_in_payload(self):
+        message = (
+            '{"email_threads": [{"author": "Jyothisree (User)", "content": '
+            '"Please update the mobile number with this mobile 9555787530"}], '
+            '"email": "owner@x.com"}'
+        )
+        result = _recover_new_contact(message, owner_email="owner@x.com", hint="<PHONE_NUMBER>")
+        assert result == "9555787530"
+
+    def test_email_hint_ignores_owner_email_from_ticket_details(self):
+        message = '{"content": "update my email to new@x.com", "email": "owner@x.com"}'
+        result = _recover_new_contact(message, owner_email="owner@x.com", hint="<EMAIL_ADDRESS>")
+        assert result == "new@x.com"
+
+    def test_email_hint_returns_none_when_only_owner_email_present(self):
+        message = '{"content": "please change my email", "email": "owner@x.com"}'
+        assert _recover_new_contact(message, owner_email="owner@x.com", hint="<EMAIL_ADDRESS>") is None
+
+    def test_owner_email_typed_by_user_without_new_cue_is_not_returned(self):
+        message = "please check owner@x.com"
+        assert _recover_new_contact(message, owner_email="owner@x.com") is None

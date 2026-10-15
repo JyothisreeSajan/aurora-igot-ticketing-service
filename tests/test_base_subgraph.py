@@ -146,6 +146,10 @@ class TestExecuteNode:
         subgraph.execute_node(state)
 
         mock_tool.invoke.assert_called_once_with({"new_contact": "real.new@gov.in"})
+        # the LLM's masked placeholder is forwarded as the type hint
+        mock_recover.assert_called_once_with(
+            "please update it to real.new@gov.in", "owner@gov.in", hint="<EMAIL_ADDRESS>"
+        )
 
     @patch("app.core.graph.subgraphs.base_subgraph._llm_execute")
     def test_multi_round_tool_calls_accumulate_results(self, mock_llm_execute):
