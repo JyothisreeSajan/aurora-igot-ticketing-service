@@ -7,13 +7,17 @@ Records are stored in the `aurora_resolution_feedback` Elasticsearch index
 which is auto-created (with explicit mapping) when the application starts via
 ESManager._ensure_indices().
 
+One record is kept per ticket: if feedback already exists for the ticket_id it
+is updated in place, otherwise a new document is created with the ticket_id as
+its _id (so concurrent first submissions cannot create duplicates).
+
 Endpoint
 --------
 POST /api/v1/feedback/resolution
 """
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Dict, Optional, Tuple
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
@@ -49,8 +53,23 @@ class ResolutionFeedbackResponse(BaseModel):
 
     success: bool
     message: str
+    action: str = Field(..., description="created | updated")
     document_id: Optional[str] = None
     index: str
+
+
+def _find_existing_feedback(index_name: str, ticket_id: str) -> Optional[Tuple[str, Dict[str, Any]]]:
+    """Return (doc_id, source) of the latest feedback for the ticket, or None."""
+    res = es_manager.client.search(
+        index=index_name,
+        body={
+            "query": {"bool": {"filter": [{"term": {"ticket_id": ticket_id}}]}},
+            "sort": [{"submitted_on": {"order": "desc", "missing": "_last"}}],
+            "size": 1,
+        },
+    )
+    hits = res.get("hits", {}).get("hits", [])
+    return (hits[0]["_id"], hits[0].get("_source", {})) if hits else None
 
 
 # ── Route ─────────────────────────────────────────────────────────────────────
@@ -62,12 +81,14 @@ class ResolutionFeedbackResponse(BaseModel):
     summary="Submit resolution feedback",
     description=(
         "Stores L1 support / user feedback for a resolved ticket into the "
-        "`aurora_resolution_feedback` Elasticsearch index."
+        "`aurora_resolution_feedback` Elasticsearch index. If feedback already "
+        "exists for the ticket_id it is updated instead of creating a new record."
     ),
 )
 async def submit_resolution_feedback(payload: ResolutionFeedbackRequest):
     """
-    Accept resolution feedback and persist it to ElasticSearch.
+    Accept resolution feedback and persist it to ElasticSearch, updating the
+    ticket's existing feedback record when there is one.
 
     Raises
     ------
@@ -94,17 +115,31 @@ async def submit_resolution_feedback(payload: ResolutionFeedbackRequest):
 
     try:
         index_name = es_manager.resolution_feedback_index
-        result = es_manager.client.index(index=index_name, document=doc)
-        doc_id = result.get("_id")
+        existing = _find_existing_feedback(index_name, payload.ticket_id)
+        if existing:
+            # Fields the caller did not send keep their stored values.
+            doc_id, stored = existing
+            sent = payload.model_fields_set
+            for field in ("category", "comments", "ticket_created_on", "l1_support_team"):
+                if field not in sent and field in stored:
+                    doc[field] = stored[field]
+            action = "updated"
+        else:
+            doc_id, action = payload.ticket_id, "created"
+
+        result = es_manager.client.index(index=index_name, id=doc_id, document=doc)
+        doc_id = result.get("_id", doc_id)
         logger.info(
-            "[feedback] Stored resolution feedback for ticket '%s' → doc_id=%s index=%s",
+            "[feedback] %s resolution feedback for ticket '%s' → doc_id=%s index=%s",
+            action.capitalize(),
             payload.ticket_id,
             doc_id,
             index_name,
         )
         return ResolutionFeedbackResponse(
             success=True,
-            message="Feedback submitted successfully.",
+            message=f"Feedback {action} successfully.",
+            action=action,
             document_id=doc_id,
             index=index_name,
         )
