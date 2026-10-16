@@ -11,11 +11,17 @@ Aggregates statistics from:
 Endpoints:
   - GET  /api/v1/dashboard/analytics?date_from=...&date_to=...
   - POST /api/v1/dashboard/analytics
+  - GET  /api/v1/dashboard/overview?month=YYYY-MM&date=YYYY-MM-DD&week_index=N
 """
 import logging
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+import re
+from collections import defaultdict
+from dataclasses import dataclass
+from datetime import date, datetime, time, timedelta, timezone
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
+from elasticsearch import helpers
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
@@ -362,3 +368,430 @@ async def get_dashboard_analytics_post(filter_payload: AnalyticsDateFilter):
         date_from=filter_payload.date_from,
         date_to=filter_payload.date_to,
     )
+
+
+# ── Overview (month / week / day drill-down) ──────────────────────────────────
+#
+# Every number is derived from the same per-ticket rows, so weeks, days,
+# categories and sub-categories always add up to the month.
+#
+#   tickets_received → tickets in `aurora_igot_user_tickets` (by created_at, IST),
+#                      excluding the "junk" category
+#   drafts_created   → those tickets with status == "resolved" (AI drafted a reply)
+#   drafts_accepted  → drafts whose latest feedback in
+#                      `aurora_resolution_feedback` has is_helpful = true
+#   drafts_rejected  → drafts_created - drafts_accepted
+
+DASHBOARD_TZ_NAME = "Asia/Kolkata"
+DASHBOARD_TZ = ZoneInfo(DASHBOARD_TZ_NAME)
+DRAFT_STATUS = "resolved"
+UNCATEGORIZED = "Uncategorized"
+JUNK_CATEGORY = "junk"
+_FEEDBACK_CHUNK = 1000
+
+
+class OverviewMetrics(BaseModel):
+    tickets_received: int
+    drafts_created: int
+    drafts_accepted: int
+    drafts_rejected: int
+    success_rate: Optional[float] = Field(None, description="drafts_accepted / drafts_created × 100; null when no drafts")
+    draft_coverage: Optional[float] = Field(None, description="drafts_created / tickets_received × 100; null when no tickets")
+
+
+class OverviewSubcategory(BaseModel):
+    id: str
+    name: str
+    metrics: OverviewMetrics
+
+
+class OverviewCategory(BaseModel):
+    id: str
+    name: str
+    metrics: OverviewMetrics
+    subcategories: List[OverviewSubcategory] = []
+
+
+class OverviewMonthRange(BaseModel):
+    earliest: str
+    latest: str
+
+
+class OverviewMeta(BaseModel):
+    generated_at: str
+    timezone: str
+    today: str
+    week_start: str = "monday"
+    months: OverviewMonthRange
+
+
+class OverviewSelection(BaseModel):
+    month: str
+    date: str
+    week_index: int
+
+
+class OverviewMonth(BaseModel):
+    id: str
+    start: str
+    end: str
+    through: str
+    is_complete: bool
+    metrics: OverviewMetrics
+    categories: List[OverviewCategory]
+
+
+class OverviewPreviousMonth(BaseModel):
+    id: str
+    metrics: OverviewMetrics
+
+
+class OverviewWeek(BaseModel):
+    index: int
+    start: str
+    end: str
+    through: str
+    status: str = Field(..., description="complete | in_progress | upcoming")
+    metrics: Optional[OverviewMetrics]
+    categories: List[OverviewCategory]
+
+
+class OverviewDaily(BaseModel):
+    date: str
+    metrics: OverviewMetrics
+
+
+class OverviewDay(BaseModel):
+    date: str
+    is_today: bool
+    metrics: OverviewMetrics
+    categories: List[OverviewCategory]
+
+
+class DashboardOverviewResponse(BaseModel):
+    meta: OverviewMeta
+    selection: OverviewSelection
+    month: OverviewMonth
+    previous_month: OverviewPreviousMonth
+    weeks: List[OverviewWeek]
+    daily: List[OverviewDaily]
+    day: OverviewDay
+
+
+@dataclass
+class _TicketRow:
+    ticket_id: str
+    day: date
+    category: str
+    sub_category: str
+    is_draft: bool
+    is_accepted: bool = False
+
+
+def _slugify(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-") or "uncategorized"
+
+
+def _parse_es_datetime(value: Any) -> Optional[datetime]:
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _month_bounds(month_id: str) -> Tuple[date, date]:
+    try:
+        start = datetime.strptime(month_id, "%Y-%m").date()
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid month '{month_id}'. Expected YYYY-MM.",
+        )
+    next_month = (start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    return start, next_month - timedelta(days=1)
+
+
+def _month_weeks(start: date, end: date) -> List[Tuple[int, date, date]]:
+    """Monday–Sunday weeks, cut at the month's edges."""
+    weeks, cur, idx = [], start, 1
+    while cur <= end:
+        week_end = min(cur + timedelta(days=6 - cur.weekday()), end)
+        weeks.append((idx, cur, week_end))
+        cur, idx = week_end + timedelta(days=1), idx + 1
+    return weeks
+
+
+def _pct(numerator: int, denominator: int) -> Optional[float]:
+    return round(numerator / denominator * 100, 1) if denominator else None
+
+
+def _metrics(rows: Iterable[_TicketRow]) -> OverviewMetrics:
+    received = created = accepted = 0
+    for r in rows:
+        received += 1
+        if r.is_draft:
+            created += 1
+            accepted += int(r.is_accepted)
+    return OverviewMetrics(
+        tickets_received=received,
+        drafts_created=created,
+        drafts_accepted=accepted,
+        drafts_rejected=created - accepted,
+        success_rate=_pct(accepted, created),
+        draft_coverage=_pct(created, received),
+    )
+
+
+def _categories(rows: List[_TicketRow]) -> List[OverviewCategory]:
+    grouped: Dict[str, Dict[str, List[_TicketRow]]] = defaultdict(lambda: defaultdict(list))
+    for r in rows:
+        grouped[r.category][r.sub_category].append(r)
+
+    categories: List[OverviewCategory] = []
+    for cat_name, subs in grouped.items():
+        cat_rows = [r for sub_rows in subs.values() for r in sub_rows]
+        subcategories = [
+            OverviewSubcategory(id=_slugify(sub_name), name=sub_name, metrics=_metrics(sub_rows))
+            for sub_name, sub_rows in subs.items()
+        ]
+        subcategories.sort(key=lambda s: (-s.metrics.tickets_received, s.name))
+        categories.append(
+            OverviewCategory(
+                id=_slugify(cat_name),
+                name=cat_name,
+                metrics=_metrics(cat_rows),
+                subcategories=subcategories,
+            )
+        )
+    categories.sort(key=lambda c: (-c.metrics.tickets_received, c.name))
+    return categories
+
+
+def _local_day_start_utc(day: date) -> str:
+    return datetime.combine(day, time.min, DASHBOARD_TZ).astimezone(timezone.utc).isoformat()
+
+
+def _fetch_ticket_rows(start: date, end: date) -> List[_TicketRow]:
+    """Load one row per ticket created between start and end (inclusive, IST) with its feedback outcome."""
+    user_tickets_index = getattr(es_manager, "user_tickets_index", "aurora_igot_user_tickets")
+    feedback_index = getattr(es_manager, "resolution_feedback_index", "aurora_resolution_feedback")
+
+    ticket_query = {
+        "query": {
+            "bool": {
+                "filter": [{
+                    "range": {
+                        "created_at": {
+                            "gte": _local_day_start_utc(start),
+                            "lt": _local_day_start_utc(end + timedelta(days=1)),
+                        }
+                    }
+                }],
+                "must_not": [{"term": {"category": JUNK_CATEGORY}}],
+            }
+        },
+        "_source": ["ticket_id", "created_at", "category", "sub_category", "status"],
+    }
+
+    rows: List[_TicketRow] = []
+    try:
+        for hit in helpers.scan(es_manager.client, index=user_tickets_index, query=ticket_query, size=1000):
+            src = hit.get("_source", {})
+            created = _parse_es_datetime(src.get("created_at"))
+            if not created:
+                continue
+            rows.append(_TicketRow(
+                ticket_id=str(src.get("ticket_id") or hit.get("_id")),
+                day=created.astimezone(DASHBOARD_TZ).date(),
+                category=(src.get("category") or "").strip() or UNCATEGORIZED,
+                sub_category=(src.get("sub_category") or "").strip() or UNCATEGORIZED,
+                is_draft=src.get("status") == DRAFT_STATUS,
+            ))
+    except Exception as exc:
+        logger.error("[dashboard] Failed to scan user tickets index '%s': %s", user_tickets_index, exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error querying ticket index: {exc}",
+        ) from exc
+
+    # Latest feedback per drafted ticket decides accepted vs rejected.
+    draft_ids = list({r.ticket_id for r in rows if r.is_draft})
+    latest: Dict[str, Tuple[datetime, bool]] = {}
+    epoch = datetime.min.replace(tzinfo=timezone.utc)
+    try:
+        for i in range(0, len(draft_ids), _FEEDBACK_CHUNK):
+            fb_query = {
+                "query": {"bool": {"filter": [{"terms": {"ticket_id": draft_ids[i:i + _FEEDBACK_CHUNK]}}]}},
+                "_source": ["ticket_id", "is_helpful", "submitted_on"],
+            }
+            for hit in helpers.scan(es_manager.client, index=feedback_index, query=fb_query, size=1000):
+                src = hit.get("_source", {})
+                tid = str(src.get("ticket_id"))
+                submitted = _parse_es_datetime(src.get("submitted_on")) or epoch
+                if tid not in latest or submitted >= latest[tid][0]:
+                    latest[tid] = (submitted, src.get("is_helpful") in (True, 1, "true", "True"))
+    except Exception as exc:
+        logger.error("[dashboard] Failed to scan feedback index '%s': %s", feedback_index, exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error querying feedback index: {exc}",
+        ) from exc
+
+    for r in rows:
+        if r.is_draft and r.ticket_id in latest:
+            r.is_accepted = latest[r.ticket_id][1]
+    return rows
+
+
+def _earliest_month(fallback: str) -> str:
+    user_tickets_index = getattr(es_manager, "user_tickets_index", "aurora_igot_user_tickets")
+    try:
+        res = es_manager.client.search(
+            index=user_tickets_index,
+            size=0,
+            aggs={"min_created": {"min": {"field": "created_at"}}},
+        )
+    except Exception as exc:
+        logger.warning("[dashboard] Could not read earliest ticket date: %s", exc)
+        return fallback
+    agg = res.get("aggregations", {}).get("min_created", {})
+    earliest = _parse_es_datetime(agg.get("value_as_string"))
+    if not earliest and agg.get("value") is not None:
+        earliest = datetime.fromtimestamp(agg["value"] / 1000, tz=timezone.utc)
+    return earliest.astimezone(DASHBOARD_TZ).strftime("%Y-%m") if earliest else fallback
+
+
+def _compute_dashboard_overview(
+    month: Optional[str] = None,
+    selected_date: Optional[str] = None,
+    week_index: Optional[int] = None,
+) -> DashboardOverviewResponse:
+    if not es_manager.client:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Elasticsearch client is not connected.",
+        )
+
+    now = datetime.now(DASHBOARD_TZ)
+    today = now.date()
+    current_month = today.strftime("%Y-%m")
+
+    month_id = month or current_month
+    month_start, month_end = _month_bounds(month_id)
+    if month_start > today:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Month '{month_id}' is in the future.",
+        )
+    through = min(month_end, today)
+
+    if selected_date:
+        try:
+            day = datetime.strptime(selected_date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid date '{selected_date}'. Expected YYYY-MM-DD.",
+            )
+        if not month_start <= day <= through:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Date must be between {month_start} and {through} for month {month_id}.",
+            )
+    else:
+        day = through
+
+    week_ranges = _month_weeks(month_start, month_end)
+    if week_index is None:
+        week_index = next(idx for idx, ws, we in week_ranges if ws <= day <= we)
+    elif not 1 <= week_index <= len(week_ranges):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"week_index must be between 1 and {len(week_ranges)} for month {month_id}.",
+        )
+
+    rows = _fetch_ticket_rows(month_start, month_end)
+    by_day: Dict[date, List[_TicketRow]] = defaultdict(list)
+    for r in rows:
+        by_day[r.day].append(r)
+
+    def rows_between(start: date, end: date) -> List[_TicketRow]:
+        return [r for r in rows if start <= r.day <= end]
+
+    weeks: List[OverviewWeek] = []
+    for idx, ws, we in week_ranges:
+        if ws > today:
+            week_status, week_metrics, week_categories = "upcoming", None, []
+        else:
+            week_rows = rows_between(ws, we)
+            week_status = "complete" if we < today else "in_progress"
+            week_metrics, week_categories = _metrics(week_rows), _categories(week_rows)
+        weeks.append(OverviewWeek(
+            index=idx,
+            start=ws.isoformat(),
+            end=we.isoformat(),
+            through=min(we, today).isoformat(),
+            status=week_status,
+            metrics=week_metrics,
+            categories=week_categories,
+        ))
+
+    daily: List[OverviewDaily] = []
+    cur = month_start
+    while cur <= through:
+        daily.append(OverviewDaily(date=cur.isoformat(), metrics=_metrics(by_day.get(cur, []))))
+        cur += timedelta(days=1)
+
+    prev_start, prev_end = _month_bounds((month_start - timedelta(days=1)).strftime("%Y-%m"))
+    prev_rows = _fetch_ticket_rows(prev_start, prev_end)
+
+    day_rows = by_day.get(day, [])
+
+    return DashboardOverviewResponse(
+        meta=OverviewMeta(
+            generated_at=now.replace(microsecond=0).isoformat(),
+            timezone=DASHBOARD_TZ_NAME,
+            today=today.isoformat(),
+            months=OverviewMonthRange(earliest=_earliest_month(current_month), latest=current_month),
+        ),
+        selection=OverviewSelection(month=month_id, date=day.isoformat(), week_index=week_index),
+        month=OverviewMonth(
+            id=month_id,
+            start=month_start.isoformat(),
+            end=month_end.isoformat(),
+            through=through.isoformat(),
+            is_complete=month_end < today,
+            metrics=_metrics(rows),
+            categories=_categories(rows),
+        ),
+        previous_month=OverviewPreviousMonth(id=prev_start.strftime("%Y-%m"), metrics=_metrics(prev_rows)),
+        weeks=weeks,
+        daily=daily,
+        day=OverviewDay(
+            date=day.isoformat(),
+            is_today=day == today,
+            metrics=_metrics(day_rows),
+            categories=_categories(day_rows),
+        ),
+    )
+
+
+@router.get(
+    "/overview",
+    response_model=DashboardOverviewResponse,
+    summary="Get month / week / day dashboard overview",
+    description=(
+        "Returns month, previous-month, weekly (Mon–Sun), daily and single-day metrics with "
+        "category and sub-category breakdowns, built from `aurora_igot_user_tickets` and "
+        "`aurora_resolution_feedback`. Dates are bucketed in Asia/Kolkata."
+    ),
+)
+def get_dashboard_overview(
+    month: Optional[str] = Query(None, description="Month to show (YYYY-MM). Defaults to the current month.", example="2026-10"),
+    date: Optional[str] = Query(None, description="Selected day (YYYY-MM-DD) within the month. Defaults to the month's last elapsed day.", example="2026-10-16"),
+    week_index: Optional[int] = Query(None, description="Selected week (1-based). Defaults to the week containing `date`."),
+):
+    return _compute_dashboard_overview(month=month, selected_date=date, week_index=week_index)

@@ -41,3 +41,4 @@ processed_ticket_*.json
 ticket_*.json
 tickets_*.json
 test_tickets.json
+/scripts/
