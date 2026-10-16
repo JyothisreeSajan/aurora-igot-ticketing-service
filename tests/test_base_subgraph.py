@@ -77,7 +77,7 @@ class TestPlanNode:
 
         human_msg = mock_llm.invoke.call_args[0][0][1].content
         assert "CONTINUATION" in human_msg
-        assert "[User]" in human_msg and "[Agent]" in human_msg
+        assert "[User: User]" in human_msg and "[Agent: Support]" in human_msg
         # PII in the historical conversation must also be masked
         assert "old@gov.in" not in human_msg
 
@@ -146,6 +146,10 @@ class TestExecuteNode:
         subgraph.execute_node(state)
 
         mock_tool.invoke.assert_called_once_with({"new_contact": "real.new@gov.in"})
+        # the LLM's masked placeholder is forwarded as the type hint
+        mock_recover.assert_called_once_with(
+            "please update it to real.new@gov.in", "owner@gov.in", hint="<EMAIL_ADDRESS>"
+        )
 
     @patch("app.core.graph.subgraphs.base_subgraph._llm_execute")
     def test_multi_round_tool_calls_accumulate_results(self, mock_llm_execute):

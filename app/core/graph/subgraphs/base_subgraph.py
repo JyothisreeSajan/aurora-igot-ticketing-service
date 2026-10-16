@@ -57,6 +57,8 @@ from app.core.utils.ticket_tracker import ticket_tracker
 
 _EMAIL_RE  = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 _MOBILE_RE = re.compile(r"(?:\+?91[-\s]?)?[6-9]\d{9}\b")
+# The ticket payload's own "email" field (the owner's address, not user-written text).
+_TICKET_EMAIL_FIELD_RE = re.compile(r'"email"\s*:\s*"[^"]*"')
 
 # Context cues used to tell which of several emails/mobiles mentioned in a ticket
 # is the NEW one the user wants registered vs. the OLD one being replaced. Tickets
@@ -85,7 +87,7 @@ def _classify_contact_context(raw_message: str, start: int) -> str:
     return "new" if new_pos > old_pos else "old"
 
 
-def _recover_new_contact(raw_message: str, owner_email: str) -> str | None:
+def _recover_new_contact(raw_message: str, owner_email: str, hint: str | None = None) -> str | None:
     """Recover the real "new" email/mobile the user wants to update to from the
     RAW (unmasked) ticket message.
 
@@ -105,8 +107,15 @@ def _recover_new_contact(raw_message: str, owner_email: str) -> str | None:
     or isn't mentioned at all. So we first prefer whichever candidate has an
     explicit "new"-style cue word near it, and only fall back to the
     owner-exclusion heuristic when the context is ambiguous.
+
+    `hint` is the (masked) value the LLM passed for the tool argument: a
+    `<PHONE_NUMBER>` placeholder searches mobiles only, `<EMAIL_ADDRESS>` emails
+    only; anything else tries email first, then mobile. The owner's own email is
+    never returned unless the user's text marks it "new".
     """
-    raw_message = raw_message or ""
+    # Drop the ticket-details "email" field (the owner's address) so it can't be
+    # mistaken for something the user wrote, or pick up a nearby "update" cue.
+    raw_message = _TICKET_EMAIL_FIELD_RE.sub('"email": ""', raw_message or "")
     owner_norm = (owner_email or "").strip().lower()
 
     def _pick(pattern: "re.Pattern[str]") -> str | None:
@@ -128,8 +137,13 @@ def _recover_new_contact(raw_message: str, owner_email: str) -> str | None:
         if candidates:
             return candidates[-1]
 
-        return tagged[-1][0]
+        # Only the owner's own contact is left — not something to switch to.
+        return None
 
+    if hint and "PHONE_NUMBER" in hint:
+        return _pick(_MOBILE_RE)
+    if hint and "EMAIL_ADDRESS" in hint:
+        return _pick(_EMAIL_RE)
     return _pick(_EMAIL_RE) or _pick(_MOBILE_RE)
 
 
@@ -312,7 +326,9 @@ class BaseSubgraph(ABC):
                     # here is just a `<EMAIL_ADDRESS>` placeholder, not a usable argument.
                     for arg_name in ("new_email", "new_contact"):
                         if arg_name in tool_args:
-                            recovered = _recover_new_contact(message, state.get("email", ""))
+                            recovered = _recover_new_contact(
+                                message, state.get("email", ""), hint=str(tool_args[arg_name])
+                            )
                             if recovered:
                                 logger.info(f"[{self.CATEGORY}] secure new-contact recovery for tool='{tool_name}'")
                                 tool_args[arg_name] = recovered

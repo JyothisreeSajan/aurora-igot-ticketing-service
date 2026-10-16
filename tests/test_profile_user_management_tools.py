@@ -919,11 +919,17 @@ class TestSopA2NoContactPlaceholders:
 
 
 class TestSopA2AlreadyRegisteredConfirmation:
-    def test_confirmation_uses_unmask_tokens_after_format(self):
+    def test_confirmation_asks_user_to_fill_blank_details(self):
         rendered = PROFILE_USER_MANAGEMENT_SYSTEM_PROMPT.format(email="x", main_category="m")
-        assert "Current Email ID: {{USER_EMAIL}}" in rendered
-        assert "to be Updated: {{NEW_CONTACT}}" in rendered
-        assert "Please confirm whether you would like us to raise a support" in rendered
+        assert "Current Email ID: __________" in rendered
+        assert "Email ID to be Updated: __________" in rendered
+        assert "Current Mobile Number: __________" in rendered
+        assert "Mobile Number to be Updated: __________" in rendered
+        assert "Please fill in the details above and confirm" in rendered
+
+    def test_step3_requires_type_matching_placeholder(self):
+        assert "the literal string <PHONE_NUMBER>" in PROFILE_USER_MANAGEMENT_SYSTEM_PROMPT
+        assert "the literal string <EMAIL_ADDRESS>" in PROFILE_USER_MANAGEMENT_SYSTEM_PROMPT
 
 
 class TestSpocReplacementsAccumulate:
