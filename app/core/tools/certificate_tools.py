@@ -67,10 +67,14 @@ ENROLLMENT_FIELDS = [
 def _get_latest_enrollments(
     user_id: str,
     status: list,
-    top_n: int = 20,
+    top_n: int | None = None,
     fields: list = ENROLLMENT_FIELDS,
 ) -> dict:
-    """Internal helper: fetch and filter enrollment list by user_id."""
+    """Internal helper: fetch and filter enrollment list by user_id.
+
+    Newest first. top_n=None (the default) returns every enrollment, so an older
+    course is never cut off before the ticket's course name can be matched.
+    """
     url = f"{IGOT_API_HOST_URL}/api/course/private/v4/user/enrollment/list/{user_id}"
     payload = {"request": {"status": status}}
 
