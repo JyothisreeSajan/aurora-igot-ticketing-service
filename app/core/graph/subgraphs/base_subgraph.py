@@ -473,6 +473,7 @@ class BaseSubgraph(ABC):
             "is_resolved":        is_resolved,
             "needs_clarification": needs_clarification,
             "escalated_to_human": escalate,
+            **({"handoff_reason": reason} if escalate else {}),
             "partial_match":       False,
             "resolution_draft":   draft if is_resolved else state.get("resolution_draft", ""),
             "retry_count":        retry + 1,

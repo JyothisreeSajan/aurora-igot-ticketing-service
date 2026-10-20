@@ -382,7 +382,7 @@ BASE_DECIDE_HUMAN_MESSAGE = (
     '  Set: {{"resolved": false, "needs_clarification": false, "escalate": false}}\n\n'
     "Respond ONLY with valid JSON (no markdown):\n"
     '{{"resolved": true/false, "needs_clarification": true/false, "escalate": true/false, '
-    '"reason": "<one sentence>", "draft": "<HTML fragment — use <p>, <ul>/<ol>/<li>, <strong>, <br> tags. '
+    '"reason": "<one short sentence on what happened with this ticket>", "draft": "<HTML fragment — use <p>, <ul>/<ol>/<li>, <strong>, <br> tags. '
     'No markdown. No <html>/<body> wrapper tags. Just the inner resolution content. '
     'Do NOT include any greeting/salutation (e.g. Hi, Dear) or closing sign-off (e.g. Regards, Thank you) — the email template adds these automatically.>"}}'
 )

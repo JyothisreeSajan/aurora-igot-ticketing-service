@@ -342,6 +342,28 @@ class TestDecideNode:
         assert new_state["resolution_draft"] == "Escalating to human agent."
 
     @patch("app.core.graph.subgraphs.base_subgraph._llm")
+    def test_escalate_keeps_the_handoff_reason(self, mock_llm):
+        mock_llm.invoke.return_value = _ai_message(json.dumps({
+            "resolved": False, "needs_clarification": False, "escalate": True,
+            "draft": "Escalating.", "reason": "MDO details could not be fetched.",
+        }))
+        state = {"email": "user@gov.in", "message": "issue", "plan": "p", "tool_results": [], "retry_count": 0}
+
+        new_state = _DummySubgraph().decide_node(state)
+
+        assert new_state["handoff_reason"] == "MDO details could not be fetched."
+
+    @patch("app.core.graph.subgraphs.base_subgraph._llm")
+    def test_no_handoff_reason_when_not_escalating(self, mock_llm):
+        mock_llm.invoke.return_value = _ai_message(json.dumps({
+            "resolved": True, "needs_clarification": False, "escalate": False,
+            "draft": "<p>Done</p>", "reason": "Resolved.",
+        }))
+        state = {"email": "user@gov.in", "message": "issue", "plan": "p", "tool_results": [], "retry_count": 0}
+
+        assert "handoff_reason" not in _DummySubgraph().decide_node(state)
+
+    @patch("app.core.graph.subgraphs.base_subgraph._llm")
     def test_retry_outcome_when_not_resolved(self, mock_llm):
         mock_llm.invoke.return_value = _ai_message(json.dumps({
             "resolved": False,

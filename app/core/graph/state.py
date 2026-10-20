@@ -65,5 +65,6 @@ class TicketState(TypedDict, total=False):
     final_response:      str
     escalated_to_human:  bool
     escalation_reason:   str
+    handoff_reason:      str      # short reason the model gave when it escalated (shown in the private Zoho comment)
     error:               str      # populated if something crashes
 
