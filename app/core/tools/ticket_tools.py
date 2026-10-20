@@ -32,6 +32,13 @@ from app.core.utils.es_utils import es_manager
 logger = logging.getLogger(__name__)
 
 
+def _comment_text(state: TicketState) -> str:
+    """The standard private comment, with the reason the model gave (if any) added under it."""
+    reason = state.get("handoff_reason")
+    reason = reason.strip() if isinstance(reason, str) else ""
+    return f"{OUT_OF_SCOPE_COMMENT}<br>{reason}" if reason else OUT_OF_SCOPE_COMMENT
+
+
 def send_to_human_queue(state: TicketState) -> TicketState:
     """
     Writes the ticket to the human escalation queue.
@@ -54,7 +61,7 @@ def send_to_human_queue(state: TicketState) -> TicketState:
     # so the L1 agent knows Aurora could not handle it. Covers every
     # human_queue path, including silent dead-end hand-offs.
     logger.info(f"[human_queue] Skipping Zoho draft for escalated ticket {ticket_id}; adding private comment.")
-    add_zoho_ticket_comment(ticket_id, OUT_OF_SCOPE_COMMENT)
+    add_zoho_ticket_comment(ticket_id, _comment_text(state))
 
     log_ticket_outcome(state, outcome="escalated_to_human")
 
@@ -125,7 +132,7 @@ def notify_user(state: TicketState) -> TicketState:
         # reach here (early_exit handles them), but are excluded defensively
         # so category-disabled is not commented twice.
         if not state.get("is_junk") and not state.get("is_category_disabled"):
-            add_zoho_ticket_comment(ticket_id, OUT_OF_SCOPE_COMMENT)
+            add_zoho_ticket_comment(ticket_id, _comment_text(state))
 
     if state.get("is_category_disabled"):
         outcome = "category_disabled"
