@@ -201,6 +201,28 @@ class TestGetUserEnrollments:
         assert result["result"]["courses"][0]["courseName"] == "Has Enrolled Date"
 
     @patch("app.core.tools.certificate_tools.requests.post")
+    def test_returns_every_enrollment_with_no_limit(self, mock_post):
+        """Regression: a course older than the 20 most recent enrollments must still
+        be returned, so the ticket's course can always be matched."""
+        courses = [
+            {"courseId": f"c{i}", "courseName": f"Course {i}", "status": 1, "enrolledDate": i}
+            for i in range(1, 50)
+        ]
+        courses.append({"courseId": "old", "courseName": "Understanding Urbanisation in India",
+                        "status": 2, "enrolledDate": 0})
+        mock_post.side_effect = [
+            _search_response([{"id": "user-1"}]),
+            _enrollment_list_response(courses),
+        ]
+
+        result = json.loads(get_user_enrollments.func("user@x.com"))
+
+        assert result["total_fetched"] == 50
+        assert result["returned"] == 50
+        names = [c["courseName"] for c in result["result"]["courses"]]
+        assert "Understanding Urbanisation in India" in names
+
+    @patch("app.core.tools.certificate_tools.requests.post")
     def test_status_filter_completed(self, mock_post):
         mock_post.side_effect = [
             _search_response([{"id": "user-1"}]),
