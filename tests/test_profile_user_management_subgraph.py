@@ -187,6 +187,22 @@ class TestDecideNodeDeadEndDetection:
         assert "Mother Tongue" in result["escalation_reason"]
 
     @patch("app.core.graph.subgraphs.base_subgraph._llm")
+    def test_service_not_found_dead_end(self, mock_llm):
+        _mock_llm_escalate(mock_llm)
+        subgraph = ProfileUserManagementSubgraph()
+        tool_results = [_tool_result("check_service_available", {"found": False, "match_type": "not_found"})]
+        state = {
+            "ticket_id": "t1", "email": "u@gov.in", "message": "msg",
+            "tool_results": tool_results, "retry_count": 0,
+        }
+
+        result = subgraph.decide_node(state)
+
+        assert result["resolution_draft"] == ""
+        assert result["confidence"] == 0.0
+        assert "Service Update" in result["escalation_reason"]
+
+    @patch("app.core.graph.subgraphs.base_subgraph._llm")
     def test_no_mdo_admin_dead_end(self, mock_llm):
         """get_mdo_details_by_org_id fails, no get_org_imported_designations call
         (i.e. NOT the Designation Not Found flow) -> generic MDO-not-found reason."""

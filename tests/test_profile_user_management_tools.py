@@ -22,6 +22,7 @@ from app.core.tools import profile_user_management_tools as put
 from app.core.tools.profile_user_management_tools import (
     check_contact_registered,
     check_mother_tongue_available,
+    check_service_available,
     get_enrollment_summary,
     get_mdo_details_by_org_id,
     get_org_imported_designations,
@@ -701,6 +702,70 @@ class TestCheckMotherTongueAvailable:
         assert "error" in result
 
 
+# ── SOP-P13 STEP 1 — check_service_available ───────────────────────────────
+
+def _service_config(*names):
+    return _mock_response({"result": {"response": {"value": {"civilServiceType": {
+        "civilServiceTypeList": [{"name": "Type", "serviceList": [
+            {"name": n, "displayName": n} for n in names
+        ]}]
+    }}}}})
+
+
+_SERVICES = ("Indian Administrative Service (IAS)", "Indian Railway Service", "Indian Railway Accounts Service")
+
+
+class TestCheckServiceAvailable:
+    @patch("app.core.tools.profile_user_management_tools.requests.get")
+    def test_exact_match_ignores_case_spacing_and_the_bracketed_abbreviation(self, mock_get):
+        mock_get.return_value = _service_config(*_SERVICES)
+
+        for query in ("Indian Administrative Service (IAS)", "indian  administrative service", "INDIAN RAILWAY SERVICE"):
+            result = json.loads(check_service_available.func(query))
+            assert result["match_type"] == "exact" and result["found"] is True
+
+        assert json.loads(check_service_available.func("indian administrative service"))["matched_name"] == (
+            "Indian Administrative Service (IAS)"
+        )
+
+    @patch("app.core.tools.profile_user_management_tools.requests.get")
+    def test_abbreviation_or_part_of_a_name_needs_the_full_name(self, mock_get):
+        mock_get.return_value = _service_config(*_SERVICES)
+
+        abbreviation = json.loads(check_service_available.func("IAS"))
+        partial = json.loads(check_service_available.func("Railway"))
+
+        assert abbreviation["match_type"] == "needs_full_name" and abbreviation["found"] is False
+        assert partial["match_type"] == "needs_full_name"
+        assert "Indian Railway Service" in partial["candidates"]
+
+    @patch("app.core.tools.profile_user_management_tools.requests.get")
+    def test_unknown_or_empty_service_is_not_found(self, mock_get):
+        mock_get.return_value = _service_config(*_SERVICES)
+
+        for query in ("Indian Imaginary Service", ""):
+            result = json.loads(check_service_available.func(query))
+            assert result["match_type"] == "not_found" and result["found"] is False
+
+    @patch("app.core.tools.profile_user_management_tools.requests.get")
+    def test_calls_the_cadre_config_api_with_a_bearer_key(self, mock_get):
+        mock_get.return_value = _service_config(*_SERVICES)
+
+        check_service_available.func("Indian Railway Service")
+
+        assert mock_get.call_args.args[0].endswith("/api/data/v2/system/settings/get/cadreConfig")
+        assert mock_get.call_args.kwargs["headers"]["Authorization"].startswith("Bearer ")
+
+    @patch("app.core.tools.profile_user_management_tools.requests.get")
+    def test_exception_is_handled(self, mock_get):
+        mock_get.side_effect = Exception("timeout")
+
+        result = json.loads(check_service_available.func("Indian Railway Service"))
+
+        assert result["match_type"] == "error" and result["found"] is False
+        assert "error" in result
+
+
 # ── SOP-P7 STEP 1 — get_user_ehrms_details ──────────────────────────────────
 
 class TestGetUserEhrmsDetails:
@@ -885,6 +950,7 @@ class TestGetProfileUserManagementTools:
             "get_profile_verification_request_details",
             "get_department_mdo_admin",
             "check_mother_tongue_available",
+            "check_service_available",
             "get_user_ehrms_details",
             "get_profile_completion_details",
         }
@@ -1065,3 +1131,41 @@ class TestAccessRevokedSop:
         assert "how do I raise a Transfer Request?" in flat
         assert 'sub_category="Access Revoked"' in flat
 
+
+# ── SOP-P13 Service Not Found — prompt regression guards ────────────────────
+
+class TestServiceNotFoundSop:
+    @staticmethod
+    def _sop():
+        from app.core.utils.prompt_templates import PROFILE_USER_MANAGEMENT_SYSTEM_PROMPT
+
+        flat = " ".join(PROFILE_USER_MANAGEMENT_SYSTEM_PROMPT.split())
+        start = flat.index("SOP-P13 Profile Update")
+        return flat[start:flat.index("SOP-A2 Email / Mobile Already Registered", start)]
+
+    def test_uses_the_service_check_tool_and_its_outcomes(self):
+        sop = self._sop()
+
+        assert "check_service_available" in sop
+        for outcome in ('match_type="exact"', 'match_type="needs_full_name"', 'match_type="not_found"', 'match_type="error"'):
+            assert outcome in sop
+
+    def test_available_service_reply_has_the_update_steps(self):
+        sop = self._sop()
+
+        assert "the requested service is already available in the system" in sop
+        assert "Locate the Service field." in sop
+        assert "Select the exact service name from the list." in sop
+
+    def test_missing_or_short_name_asks_for_the_full_name(self):
+        sop = self._sop()
+
+        assert "kindly share the exact name of your service in its full form" in sop
+        assert "Please avoid using abbreviations or short forms, so that we can assist you further" in sop
+        assert "Use the SAME exact message as above" in sop
+
+    def test_unavailable_service_escalates_and_is_not_the_service_history_sop(self):
+        sop = self._sop()
+
+        assert "Case 2 — Service is not available. escalate=true" in sop
+        assert "NOT the Service History section; that is SOP-P8" in sop

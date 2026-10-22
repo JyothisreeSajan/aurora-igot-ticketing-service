@@ -80,6 +80,7 @@ Covers SOP workflows from Agent_SOP_Profile_User_Management.md:
 
 import json
 import logging
+import re
 
 import requests
 from langchain.tools import tool
@@ -859,6 +860,65 @@ def check_mother_tongue_available(mother_tongue_name: str) -> str:
         return json.dumps({"query": mother_tongue_name, "found": False, "error": str(e)})
 
 
+# ── SOP-P13 — Service Not Found ───────────────────────────────────────────────
+
+_SERVICE_BRACKET_RE = re.compile(r"\s*\(([^)]*)\)\s*$")
+
+
+def _norm_service(text) -> str:
+    """Lower-case, punctuation-free, single-spaced — for comparing service names."""
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", str(text or "").lower()).split())
+
+
+@tool
+def check_service_available(service_name: str) -> str:
+    """Check whether a user-reported civil service exists in the platform's service
+    list (the cadreConfig master data).
+
+    Used in SOP-P13 STEP 1. Returns match_type:
+      "exact"           - the name matches a service (case, spacing and punctuation
+                          ignored; the bracketed abbreviation may be left out)
+      "needs_full_name" - an abbreviation (e.g. "IAS") or only part of a service name;
+                          the user must give the full name
+      "not_found"       - no service matches
+      "error"           - the lookup failed
+    """
+    url = f"{IGOT_API_HOST_URL}/api/data/v2/system/settings/get/cadreConfig"
+    headers = {"Authorization": f"Bearer {IGOT_KEY}"}
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        value = resp.json().get("result", {}).get("response", {}).get("value", {}) or {}
+        type_list = (value.get("civilServiceType") or {}).get("civilServiceTypeList") or []
+        services = [s for t in type_list for s in (t.get("serviceList") or []) if s.get("name")]
+
+        query = _norm_service(service_name)
+        exact, short_form = None, []
+        for s in services:
+            name = s["name"]
+            bracket = _SERVICE_BRACKET_RE.search(name)
+            base = _SERVICE_BRACKET_RE.sub("", name)
+            full_forms = {_norm_service(name), _norm_service(s.get("displayName")), _norm_service(base)}
+            if query and query in full_forms:
+                exact = name
+                break
+            if query and (
+                (bracket and query == _norm_service(bracket.group(1)))
+                or (len(query) >= 4 and query in _norm_service(name))
+            ):
+                short_form.append(name)
+
+        if exact:
+            return json.dumps({"query": service_name, "found": True, "match_type": "exact", "matched_name": exact})
+        if short_form:
+            return json.dumps({"query": service_name, "found": False, "match_type": "needs_full_name",
+                               "candidates": short_form[:5]})
+        return json.dumps({"query": service_name, "found": False, "match_type": "not_found"})
+    except Exception as e:
+        logger.error(f"[profile_user_management_tools] check_service_available error: {e}")
+        return json.dumps({"query": service_name, "found": False, "match_type": "error", "error": str(e)})
+
+
 # ── Shared helper — SOP-P7 / SOP-P12 own-profile lookup by email ────────────
 # Both SOPs below need nothing but "look this user up by email, and if
 # anything goes wrong return a ready-to-use error response" before doing
@@ -1030,6 +1090,7 @@ def get_profile_user_management_tools() -> list:
         check_contact_registered,           # SOP-A2 STEP 3
         get_enrollment_summary,             # SOP-A2 STEP 4.1
         check_mother_tongue_available,      # SOP-P5 STEP 1
+        check_service_available,            # SOP-P13 STEP 1
         get_user_ehrms_details,             # SOP-P7 STEP 1
         get_profile_completion_details,     # SOP-P12 STEP 1
         get_profile_verification_request_details,  # SOP-A3 STEP 1
