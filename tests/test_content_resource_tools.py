@@ -16,6 +16,7 @@ from app.core.tools.content_resource_tools import (
     get_course_resources,
     get_user_course_enrollments,
 )
+from app.core.utils.prompt_templates import CONTENT_RESOURCE_NOT_OPENING_SYSTEM_PROMPT
 
 
 def _mock_response(payload):
@@ -252,3 +253,69 @@ class TestGetContentResourceTools:
             "get_course_resources",
             "check_youtube_resource_urls",
         }
+
+
+# ── Resource Not Opening prompt — course named but not enrolled ─────────────
+
+class TestCourseNotEnrolledPrompt:
+    @staticmethod
+    def _prompt():
+        return " ".join(CONTENT_RESOURCE_NOT_OPENING_SYSTEM_PROMPT.split())
+
+    def test_named_course_matching_no_enrollment_gets_its_own_step(self):
+        prompt = self._prompt()
+
+        assert "matches NONE of the enrollments" in prompt
+        assert "-> STEP 2-WEB-NOTENROLLED" in prompt
+
+    def test_not_enrolled_reply_wording(self):
+        prompt = self._prompt()
+
+        assert (
+            "We have checked your account and found that you are not enrolled in "
+            "<course name as the user wrote it>. Kindly enroll in the course to access its resources."
+        ) in prompt
+
+    def test_not_enrolled_needs_no_ticket(self):
+        prompt = self._prompt()
+
+        assert "STEP 2-WEB-NOTENROLLED — Course Named, Not Enrolled. NO ticket." in prompt
+        assert "Web: course named but not among the user's enrollments -> NO ticket, not-enrolled message" in prompt
+
+    def test_unnamed_course_still_asks_for_the_names(self):
+        prompt = self._prompt()
+
+        assert "inferred_course_name is null -> STEP 2-WEB-NOMATCH" in prompt
+        assert "Kindly share the exact course name and the resource name you are facing the issue with" in prompt
+
+    def test_several_matching_courses_are_checked_before_asking(self):
+        prompt = self._prompt()
+
+        assert "inferred_course_name matches 2+ courses equally well -> STEP 2-WEB-MULTI" in prompt
+        assert "get_course_resources(course_id, email=<user_email>) for EACH matching course" in prompt
+        assert "matches a resource in exactly ONE of those courses" in prompt
+        assert "go to STEP 4-WEB (skip STEP 3-WEB). No question." in prompt
+
+    def test_unclear_multi_match_lists_the_courses_in_the_question(self):
+        prompt = self._prompt()
+
+        assert "We found more than one course matching what you mentioned:" in prompt
+        assert "ONE PER LINE, as an HTML unordered list (<ul><li>...</li></ul>)" in prompt
+        assert "needs_clarification=true and ask, listing the matching courses" in prompt
+        assert "Kindly mention the exact course name so that we can assist you further." in prompt
+
+    def test_any_words_pointing_to_a_course_count_as_a_mention(self):
+        prompt = self._prompt()
+
+        assert "ANY words the user wrote that point to a course" in prompt
+        assert "It is null ONLY when the message mentions no course at all" in prompt
+        assert "compare them against the user's enrollments below" in prompt
+
+    def test_known_course_with_no_named_resource_asks_only_for_the_resource(self):
+        prompt = self._prompt()
+
+        assert (
+            "We found the course <course name> on your profile. Kindly share the name of the resource "
+            "you are facing the issue with, so we can assist you further."
+        ) in prompt
+
