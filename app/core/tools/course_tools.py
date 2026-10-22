@@ -12,10 +12,8 @@ Covers all five SOP workflows from Agent_SOP_Course_Issues.md:
           get_yp_am_details          → STEP 6B (fallback), C2-no-MDO
 
   SOP-C2  get_user_enrollments       → STEP 1, C5
-          get_content_metadata       → STEP 3
 
   SOP-C3  get_user_enrollments       → STEP 3
-          get_content_metadata       → STEP 3
 
   SOP-C4  get_user_feed              → STEP A1
           get_user_profile           → STEP C1
@@ -489,66 +487,6 @@ def get_yp_am_details(ministry_or_state: str) -> str:
         })
 
 
-# ── SOP-C2 / SOP-C3 ───────────────────────────────────────────────────────────
-
-@tool
-def get_content_metadata(content_id: str) -> str:
-    """Fetch metadata for a course or content item by its identifier (do_id).
-
-    Used in SOP-C2 STEP 3 (identify resource type for progress diagnosis)
-    and SOP-C3 STEP 3 (identify resource type when content fails to load on web).
-
-    Returns: contentType, mimeType, name, duration, language, organisation,
-    source, batches (enrollment windows), parentCollections, and leafNodes.
-
-    Args:
-        content_id: The do_id of the content item (e.g. do_11382688590204108818).
-    """
-    url = f"{IGOT_API_HOST_URL}/api/content/v1/search"
-    headers = {
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "request": {
-            "filters": {
-                "identifier": [content_id]
-            },
-            "limit": 10
-        }
-    }
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-
-        content_list = data.get("result", {}).get("content", [])
-        if not content_list:
-            return json.dumps({
-                "content_id": content_id,
-                "found": False,
-                "message": "No content found for the given identifier.",
-            })
-
-        item = content_list[0]
-        result = {
-            "content_id": item.get("identifier"),
-            "name": item.get("name"),
-            "contentType": item.get("contentType"),
-            "mimeType": item.get("mimeType"),
-            "mediaType": item.get("mediaType"),
-            "duration": item.get("duration"),
-            "language": item.get("language"),
-            "organisation": item.get("organisation"),
-            "source": item.get("source"),
-            "batches": item.get("batches", []),
-            "parentCollections": item.get("parentCollections", []),
-            "leafNodes": item.get("leafNodes", []),
-        }
-        return json.dumps(result, indent=2)
-    except Exception as e:
-        return f"Error fetching content metadata for {content_id}: {e!s}"
-
-
 # ── SOP-C4 ────────────────────────────────────────────────────────────────────
 
 @tool
@@ -735,7 +673,6 @@ def get_course_tools() -> list:
         get_mdo_details,           # SOP-C1 STEP 6B, 7 + SOP-C4 A3, A4, C-no-MDO
         get_yp_am_details,         # SOP-C1 STEP 6B fallback + SOP-C4 C-no-MDO
         get_user_enrollments,      # SOP-C2 STEP 1 + SOP-C3 STEP 3 + SOP-C4-C STEP C5
-        get_content_metadata,      # SOP-C2 STEP 3 + SOP-C3 STEP 3
         get_user_feed,             # SOP-C4 SECTION A STEP A1
         get_apar_assignments,      # SOP-C4 SECTION C STEP C5
     ]

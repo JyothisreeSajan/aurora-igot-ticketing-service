@@ -10,7 +10,6 @@ from app.core.tools.course_tools import (
     composite_content_search,
     get_access_settings,
     get_apar_assignments,
-    get_content_metadata,
     get_course_tools,
     get_mdo_details,
     get_user_enrollments,
@@ -55,6 +54,36 @@ class TestGetUserEnrollments:
         result = json.loads(get_user_enrollments.func("nobody@x.com"))
 
         assert result["error"] == "User not found."
+
+    @patch("app.core.tools.course_tools.requests.post")
+    def test_user_id_empty(self, mock_post):
+        mock_post.return_value = _search_response([{"id": ""}])
+
+        result = json.loads(get_user_enrollments.func("user@x.com"))
+
+        assert result["error"] == "User found but user_id is empty."
+
+    @patch("app.core.tools.course_tools.requests.post")
+    def test_status_filter_in_progress(self, mock_post):
+        mock_post.side_effect = [
+            _search_response([{"id": "user-1"}]),
+            _mock_response({"result": {"courses": []}}),
+        ]
+
+        get_user_enrollments.func("user@x.com", status_filter="In-Progress")
+
+        assert mock_post.call_args_list[1].kwargs["json"] == {"request": {"status": ["In-Progress"]}}
+
+    @patch("app.core.tools.course_tools.requests.post")
+    def test_status_filter_completed(self, mock_post):
+        mock_post.side_effect = [
+            _search_response([{"id": "user-1"}]),
+            _mock_response({"result": {"courses": []}}),
+        ]
+
+        get_user_enrollments.func("user@x.com", status_filter="Completed")
+
+        assert mock_post.call_args_list[1].kwargs["json"] == {"request": {"status": ["Completed"]}}
 
     @patch("app.core.tools.course_tools.requests.post")
     def test_exception_is_handled(self, mock_post):
@@ -134,6 +163,18 @@ class TestCompositeContentSearch:
         result = json.loads(composite_content_search.func("Course B"))
 
         assert result["results"][0]["provider"] == "Org X"
+
+    @patch("app.core.tools.course_tools.requests.post")
+    def test_provider_falls_back_to_organisation_string(self, mock_post):
+        mock_post.return_value = _mock_response({
+            "result": {
+                "content": [{"identifier": "do_3", "name": "Course C", "status": "Live", "organisation": "Org Y"}],
+            }
+        })
+
+        result = json.loads(composite_content_search.func("Course C"))
+
+        assert result["results"][0]["provider"] == "Org Y"
 
     @patch("app.core.tools.course_tools.requests.post")
     def test_provider_defaults_to_igot(self, mock_post):
@@ -288,37 +329,6 @@ class TestGetYpAmDetails:
         assert "error" in result
 
 
-# ── get_content_metadata (SOP-C2 STEP 3, SOP-C3 STEP 3) ─────────────────────
-
-class TestGetContentMetadata:
-    @patch("app.core.tools.course_tools.requests.post")
-    def test_success(self, mock_post):
-        mock_post.return_value = _mock_response({
-            "result": {"content": [{"identifier": "do_1", "name": "Course A", "contentType": "Course"}]}
-        })
-
-        result = json.loads(get_content_metadata.func("do_1"))
-
-        assert result["content_id"] == "do_1"
-        assert result["contentType"] == "Course"
-
-    @patch("app.core.tools.course_tools.requests.post")
-    def test_not_found(self, mock_post):
-        mock_post.return_value = _mock_response({"result": {"content": []}})
-
-        result = json.loads(get_content_metadata.func("do_missing"))
-
-        assert result["found"] is False
-
-    @patch("app.core.tools.course_tools.requests.post")
-    def test_exception_is_handled(self, mock_post):
-        mock_post.side_effect = Exception("timeout")
-
-        result = get_content_metadata.func("do_1")
-
-        assert "Error fetching content metadata" in result
-
-
 # ── get_user_feed (SOP-C4 SECTION A STEP A1) ────────────────────────────────
 
 class TestGetUserFeed:
@@ -365,6 +375,14 @@ class TestGetUserFeed:
 # ── get_apar_assignments (SOP-C4 SECTION C STEP C5) ─────────────────────────
 
 class TestGetAparAssignments:
+    @patch("app.core.tools.course_tools.requests.post")
+    def test_user_id_empty(self, mock_post):
+        mock_post.return_value = _search_response([{"id": ""}])
+
+        result = json.loads(get_apar_assignments.func("user@x.com"))
+
+        assert result["error"] == "User found but user_id is empty."
+
     @patch("app.core.tools.course_tools.requests.post")
     def test_apar_assigned_and_passed(self, mock_post):
         search_resp = _search_response([{"id": "user-1"}])
@@ -434,7 +452,6 @@ class TestGetCourseTools:
             "get_mdo_details",
             "get_yp_am_details",
             "get_user_enrollments",
-            "get_content_metadata",
             "get_user_feed",
             "get_apar_assignments",
         }
