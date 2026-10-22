@@ -460,3 +460,65 @@ class TestGetCertificateNotReceivedTools:
             "get_user_enrollments", "diagnose_certificate_receipt",
             "get_user_events", "diagnose_event_certificate",
         }
+
+
+# ── Certificate Not Received — STEP 4A reply (certificate available) ────────
+
+class TestCertificateAvailableReply:
+    @staticmethod
+    def _step_4a():
+        from app.core.utils.prompt_templates import CERTIFICATE_NOT_RECEIVED_SYSTEM_PROMPT
+
+        flat = " ".join(CERTIFICATE_NOT_RECEIVED_SYSTEM_PROMPT.split())
+        start = flat.index("STEP 4A — Certificate Available")
+        return flat[start:flat.index("STEP 4A-FOLLOWUP — Still Unable")]
+
+    def test_says_the_course_is_completed_and_more_than_24_hours_have_passed(self):
+        step = self._step_4a()
+
+        assert "We checked, and found that the [course/program] [course/program name] has been successfully completed" in step
+        assert "more than 24 hours have passed since completion" in step
+        assert "Please download the certificate again by following the steps below:" in step
+
+    def test_steps_include_the_survey_before_downloading(self):
+        step = self._step_4a()
+
+        assert "Search and select [course/program name]." in step
+        survey = step.index("7. Please complete the survey to access the certificate (ignore if already done).")
+        assert survey < step.index("8. Click on Download Certificate.")
+
+    def test_closes_with_the_help_line(self):
+        step = self._step_4a()
+
+        assert "I hope this helps. Please let me know if you need any further assistance." in step
+
+
+# ── Certificate Not Received — event named but not enrolled ─────────────────
+
+class TestEventNotEnrolledReply:
+    @staticmethod
+    def _prompt():
+        from app.core.utils.prompt_templates import CERTIFICATE_NOT_RECEIVED_SYSTEM_PROMPT
+
+        return " ".join(CERTIFICATE_NOT_RECEIVED_SYSTEM_PROMPT.split())
+
+    def test_named_event_not_among_enrolled_events_gets_the_not_enrolled_reply(self):
+        prompt = self._prompt()
+
+        assert "A name was given but matches is empty -> NO ticket. Close. Do NOT escalate." in prompt
+        assert (
+            "We have checked your account and found that you are not enrolled in the event [name as written]. "
+            "Kindly enroll in the event to access it. Please reach out if you need any further assistance."
+        ) in prompt
+
+    def test_outcome_rule_no_longer_raises_a_ticket_for_it(self):
+        prompt = self._prompt()
+
+        assert "Event: name given but not among enrolled events -> NO ticket, not-enrolled message" in prompt
+        assert "Event: name given but not among enrolled events -> RAISE ticket" not in prompt
+
+    def test_the_old_escalation_wording_is_gone(self):
+        prompt = self._prompt()
+
+        assert "We could not find the event [name as written] among the events on your profile." not in prompt
+
