@@ -120,6 +120,8 @@ class ProfileUserManagementSubgraph(BaseSubgraph):
                 dead_end_reason = "Access Revoked: no MDO Admin or YP/SPOC contact found for the target organization."
         elif self._tool_lookup_failed(tool_results, "check_mother_tongue_available"):
             dead_end_reason = "Mother Tongue Update: reported mother tongue not found in the platform's master data."
+        elif self._tool_lookup_failed(tool_results, "check_service_available"):
+            dead_end_reason = "Service Update: reported service not found in the platform's service list."
         elif (
             # get_mdo_details_by_org_id is shared by four flows: Designation
             # Not Found (Case 2), OTP Not Received, EHRMS ID Update, and
