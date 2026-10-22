@@ -862,7 +862,18 @@ def check_mother_tongue_available(mother_tongue_name: str) -> str:
 
 # ── SOP-P13 — Service Not Found ───────────────────────────────────────────────
 
-_SERVICE_BRACKET_RE = re.compile(r"\s*\(([^)]*)\)\s*$")
+def _split_bracket(name: str) -> tuple[str, str | None]:
+    """Split a trailing "(ABBR)" off a service name -> (name without it, ABBR or None).
+
+    Plain string handling, linear in the length of the name — deliberately not a
+    regex, which would backtrack badly on long runs of spaces or brackets.
+    """
+    text = name.rstrip()
+    if text.endswith(")"):
+        start = text.rfind("(")
+        if start != -1 and ")" not in text[start + 1:-1]:
+            return text[:start].rstrip(), text[start + 1:-1]
+    return text, None
 
 
 def _norm_service(text) -> str:
@@ -896,14 +907,13 @@ def check_service_available(service_name: str) -> str:
         exact, short_form = None, []
         for s in services:
             name = s["name"]
-            bracket = _SERVICE_BRACKET_RE.search(name)
-            base = _SERVICE_BRACKET_RE.sub("", name)
+            base, abbreviation = _split_bracket(name)
             full_forms = {_norm_service(name), _norm_service(s.get("displayName")), _norm_service(base)}
             if query and query in full_forms:
                 exact = name
                 break
             if query and (
-                (bracket and query == _norm_service(bracket.group(1)))
+                (abbreviation and query == _norm_service(abbreviation))
                 or (len(query) >= 4 and query in _norm_service(name))
             ):
                 short_form.append(name)

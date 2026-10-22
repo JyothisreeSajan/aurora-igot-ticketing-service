@@ -715,6 +715,33 @@ def _service_config(*names):
 _SERVICES = ("Indian Administrative Service (IAS)", "Indian Railway Service", "Indian Railway Accounts Service")
 
 
+class TestSplitBracket:
+    def test_splits_a_trailing_abbreviation(self):
+        assert put._split_bracket("Indian Administrative Service (IAS)") == ("Indian Administrative Service", "IAS")
+        assert put._split_bracket("Indian Police Service (IPS)   ") == ("Indian Police Service", "IPS")
+
+    def test_names_without_a_trailing_bracket_are_unchanged(self):
+        assert put._split_bracket("Indian Railway Service") == ("Indian Railway Service", None)
+        assert put._split_bracket("Service (IAS) Group") == ("Service (IAS) Group", None)
+        assert put._split_bracket("Broken (IAS") == ("Broken (IAS", None)
+        assert put._split_bracket("") == ("", None)
+
+    def test_a_closing_bracket_inside_the_brackets_is_not_split(self):
+        assert put._split_bracket("A (B) C)") == ("A (B) C)", None)
+
+    def test_hostile_input_is_handled_in_linear_time(self):
+        import time
+
+        started = time.perf_counter()
+        put._split_bracket("(" * 200_000)
+        put._split_bracket(" " * 200_000 + "x")
+        put._split_bracket("(" + " " * 200_000)
+        put._split_bracket("x" * 200_000 + ")")
+        put._norm_service("(" * 200_000 + " " * 200_000)
+
+        assert time.perf_counter() - started < 1.0
+
+
 class TestCheckServiceAvailable:
     @patch("app.core.tools.profile_user_management_tools.requests.get")
     def test_exact_match_ignores_case_spacing_and_the_bracketed_abbreviation(self, mock_get):
