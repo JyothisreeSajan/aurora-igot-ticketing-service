@@ -66,5 +66,6 @@ class TicketState(TypedDict, total=False):
     escalated_to_human:  bool
     escalation_reason:   str
     handoff_reason:      str      # short reason the model gave when it escalated (shown in the private Zoho comment)
+    api_failure:         bool     # a Karmayogi API/tool call failed in the latest execute pass
     error:               str      # populated if something crashes
 

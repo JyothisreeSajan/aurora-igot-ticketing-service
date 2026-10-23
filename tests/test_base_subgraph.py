@@ -20,9 +20,10 @@ depending on any specific SOP's tools or prompts.
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
 from langchain_core.messages import AIMessage
 
-from app.core.graph.subgraphs.base_subgraph import BaseSubgraph
+from app.core.graph.subgraphs.base_subgraph import BaseSubgraph, _is_api_failure
 
 
 class _DummySubgraph(BaseSubgraph):
@@ -489,3 +490,65 @@ class TestPlanStepTicketTracking:
         subgraph.plan_node(state)
 
         mock_tracker.add_step.assert_not_called()
+
+
+# ── API failure detection ────────────────────────────────────────────────────
+
+class TestIsApiFailure:
+    @pytest.mark.parametrize("payload,expected", [
+        ('{"found": false, "error": "HTTP 500 from API"}', True),
+        ('{"status": "api_error"}', True),
+        ('{"error": "User not found."}', False),
+        ('{"error": ""}', False),
+        ('{"found": true}', False),
+        ('["error"]', False),
+        ("Tool 'x' not available.", False),
+        (None, False),
+    ])
+    def test_is_api_failure(self, payload, expected):
+        assert _is_api_failure(payload) is expected
+
+
+class TestExecuteNodeApiFailureFlag:
+    def _run(self, mock_llm_execute, tool_name, tool):
+        mock_llm_with_tools = MagicMock()
+        mock_llm_execute.bind_tools.return_value = mock_llm_with_tools
+        mock_llm_with_tools.invoke.side_effect = [
+            AIMessage(content="", tool_calls=[{"name": tool_name, "args": {}, "id": "1"}]),
+            AIMessage(content="done"),
+        ]
+        subgraph = _DummySubgraph(tools=[tool] if tool else [])
+        state = {"email": "u@gov.in", "message": "msg", "plan": "p", "tool_results": [], "retry_count": 0}
+        return subgraph.execute_node(state)
+
+    @patch("app.core.graph.subgraphs.base_subgraph._llm_execute")
+    def test_tool_exception_sets_flag(self, mock_llm_execute):
+        tool = MagicMock()
+        tool.name = "flaky"
+        tool.invoke.side_effect = Exception("API down")
+
+        assert self._run(mock_llm_execute, "flaky", tool)["api_failure"] is True
+
+    @patch("app.core.graph.subgraphs.base_subgraph._llm_execute")
+    def test_error_payload_sets_flag(self, mock_llm_execute):
+        tool = MagicMock()
+        tool.name = "lookup"
+        tool.invoke.return_value = '{"status": "api_error"}'
+
+        assert self._run(mock_llm_execute, "lookup", tool)["api_failure"] is True
+
+    @patch("app.core.graph.subgraphs.base_subgraph._llm_execute")
+    def test_clean_result_leaves_flag_false(self, mock_llm_execute):
+        tool = MagicMock()
+        tool.name = "lookup"
+        tool.invoke.return_value = '{"found": true}'
+
+        assert self._run(mock_llm_execute, "lookup", tool)["api_failure"] is False
+
+    @patch("app.core.graph.subgraphs.base_subgraph._llm_execute")
+    def test_not_found_is_a_data_miss_not_a_failure(self, mock_llm_execute):
+        tool = MagicMock()
+        tool.name = "lookup"
+        tool.invoke.return_value = '{"error": "User not found."}'
+
+        assert self._run(mock_llm_execute, "lookup", tool)["api_failure"] is False
