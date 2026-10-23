@@ -135,6 +135,11 @@ OUT_OF_SCOPE_COMMENT = (
     "Kindly assist the user with their concern."
 )
 
+HELP_REQUEST = "Kindly assist the user with their concern."
+
+API_FAILURE_NOTE = "Apologies, Aurora faced an issue while fetching details from the Karmayogi system."
+API_FAILURE_COMMENT = f"{API_FAILURE_NOTE} {HELP_REQUEST}"
+
 
 def add_zoho_ticket_comment(ticket_id: str, content: str) -> bool:
     """

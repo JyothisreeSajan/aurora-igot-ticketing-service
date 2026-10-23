@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 
 from app.core.tools.ticket_tools import notify_user, send_to_human_queue
-from app.core.tools.zoho_tools import OUT_OF_SCOPE_COMMENT
+from app.core.tools.zoho_tools import API_FAILURE_COMMENT, HELP_REQUEST, OUT_OF_SCOPE_COMMENT
 
 
 @pytest.fixture
@@ -87,10 +87,15 @@ class TestNotifyUserZohoDraftOrComment:
         zoho.assert_not_called()
         comment.assert_called_once_with("T1", OUT_OF_SCOPE_COMMENT)
 
-    def test_comment_includes_the_reason_when_there_is_one(self, zoho, comment):
+    def test_comment_is_the_reason_plus_help_request_when_there_is_one(self, zoho, comment):
         notify_user(_state(escalated_to_human=True, handoff_reason="MDO details could not be fetched."))
 
-        comment.assert_called_once_with("T1", f"{OUT_OF_SCOPE_COMMENT}<br>MDO details could not be fetched.")
+        comment.assert_called_once_with("T1", f"MDO details could not be fetched.<br>{HELP_REQUEST}")
+
+    def test_api_failure_gets_apology_not_out_of_scope(self, zoho, comment):
+        notify_user(_state(escalated_to_human=True, api_failure=True))
+
+        comment.assert_called_once_with("T1", API_FAILURE_COMMENT)
 
     def test_unresolved_ticket_skips_draft_and_adds_comment(self, zoho, comment):
         notify_user(_state(is_resolved=False))
@@ -120,10 +125,10 @@ class TestSendToHumanQueue:
         comment.assert_called_once_with("T1", OUT_OF_SCOPE_COMMENT)
         zoho.assert_not_called()
 
-    def test_human_queue_comment_includes_the_reason_when_there_is_one(self, zoho, comment):
+    def test_human_queue_comment_is_the_reason_plus_help_request_when_there_is_one(self, zoho, comment):
         send_to_human_queue({"ticket_id": "T1", "handoff_reason": "No MDO or YP contact was found."})
 
-        comment.assert_called_once_with("T1", f"{OUT_OF_SCOPE_COMMENT}<br>No MDO or YP contact was found.")
+        comment.assert_called_once_with("T1", f"No MDO or YP contact was found.<br>{HELP_REQUEST}")
 
     def test_non_text_reason_gives_the_standard_comment(self, zoho, comment):
         send_to_human_queue({"ticket_id": "T1", "handoff_reason": 5})
@@ -142,3 +147,11 @@ class TestSendToHumanQueue:
         assert out["escalated_to_human"] is True
         log.assert_called_once()
         assert log.call_args.kwargs["outcome"] == "escalated_to_human"
+
+
+def test_api_failure_with_reason_orders_apology_reason_help(zoho, comment):
+    from app.core.tools.zoho_tools import API_FAILURE_NOTE
+
+    notify_user(_state(escalated_to_human=True, api_failure=True, handoff_reason="Profile API timed out."))
+
+    comment.assert_called_once_with("T1", f"{API_FAILURE_NOTE}<br>Profile API timed out.<br>{HELP_REQUEST}")

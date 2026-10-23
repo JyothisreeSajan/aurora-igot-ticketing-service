@@ -147,6 +147,20 @@ def _recover_new_contact(raw_message: str, owner_email: str, hint: str | None = 
     return _pick(_EMAIL_RE) or _pick(_MOBILE_RE)
 
 
+def _is_api_failure(result_str: str) -> bool:
+    """True when a tool result reports a failed API call (an error/api_error payload), not a data miss."""
+    try:
+        data = json.loads(result_str)
+    except (TypeError, ValueError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    if data.get("status") == "api_error":
+        return True
+    error = data.get("error")
+    return bool(error) and "not found" not in str(error).lower()
+
+
 def _plan_step(ticket_id: str, node: str, detail: str, **extra) -> dict:
     """Create a single graph_plan step dict and push to Elasticsearch."""
     step_dict = {"node": node, "detail": detail, "timestamp": datetime.now().strftime("%H:%M:%S"), **extra}
@@ -287,6 +301,7 @@ class BaseSubgraph(ABC):
         ]
 
         accumulated_results = list(state.get("tool_results") or [])
+        api_failure = False
         # Built once per execute pass so tokens from an earlier tool call (e.g.
         # {{NEW_CONTACT}}) survive later tool calls in the same pass.
         spoc_map = dict(state.get("spoc_replacements") or {})
@@ -339,9 +354,12 @@ class BaseSubgraph(ABC):
                         result = fn.invoke(tool_args) if fn else f"Tool '{tool_name}' not available."
                     except Exception as e:
                         result = f"Tool '{tool_name}' failed: {e}"
+                        api_failure = True
                         logger.warning(f"[{self.CATEGORY}] {result}")
 
                     result_str = result if isinstance(result, str) else json.dumps(result, default=str)
+                    if _is_api_failure(result_str):
+                        api_failure = True
 
                     # Extract _spoc_replacements if present in tool result
                     if isinstance(result_str, str) and "_spoc_replacements" in result_str:
@@ -375,6 +393,7 @@ class BaseSubgraph(ABC):
         return {
             **state,
             "spoc_replacements": spoc_map,
+            "api_failure": api_failure,
             "tool_results": accumulated_results,
             "graph_plan": list(state.get("graph_plan") or []) + [step]
         }

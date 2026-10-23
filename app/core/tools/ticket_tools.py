@@ -22,6 +22,9 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 from app.core.graph.state import TicketState
 from app.core.tools.zoho_tools import (
+    API_FAILURE_COMMENT,
+    API_FAILURE_NOTE,
+    HELP_REQUEST,
     OUT_OF_SCOPE_COMMENT,
     add_zoho_ticket_comment,
     update_zoho_ticket_direct,
@@ -33,10 +36,17 @@ logger = logging.getLogger(__name__)
 
 
 def _comment_text(state: TicketState) -> str:
-    """The standard private comment, with the reason the model gave (if any) added under it."""
+    """
+    The private comment for an unresolved ticket.
+    - API/tool failure: an apology (plus the model's reason, if any) — not out of scope.
+    - Otherwise: the reason the model gave (what was checked and found) followed by a request
+      to help the user; the out-of-scope text only when there is no reason.
+    """
     reason = state.get("handoff_reason")
     reason = reason.strip() if isinstance(reason, str) else ""
-    return f"{OUT_OF_SCOPE_COMMENT}<br>{reason}" if reason else OUT_OF_SCOPE_COMMENT
+    if state.get("api_failure"):
+        return f"{API_FAILURE_NOTE}<br>{reason}<br>{HELP_REQUEST}" if reason else API_FAILURE_COMMENT
+    return f"{reason}<br>{HELP_REQUEST}" if reason else OUT_OF_SCOPE_COMMENT
 
 
 def send_to_human_queue(state: TicketState) -> TicketState:
