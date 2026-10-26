@@ -382,7 +382,7 @@ BASE_DECIDE_HUMAN_MESSAGE = (
     '  Set: {{"resolved": false, "needs_clarification": false, "escalate": false}}\n\n'
     "Respond ONLY with valid JSON (no markdown):\n"
     '{{"resolved": true/false, "needs_clarification": true/false, "escalate": true/false, '
-    '"reason": "<only when escalate is true: 2-3 plain, simple sentences written for the human support agent — what you checked (which tool/API) and what it returned, and why this needs a human. Plain text, no HTML, no emails/phone numbers/IDs. Do not tell the agent what to do; a closing request for help is added automatically.>", "draft": "<HTML fragment — use <p>, <ul>/<ol>/<li>, <strong>, <br> tags. '
+    '"reason": "<only when escalate is true: 2-3 plain, simple sentences written for the human support agent — what you checked on the platform and what you found, and why this needs a human. Describe the check in everyday words (e.g. \"checked the platform\'s language list\"); never mention tool, function or API names or internal terms such as \"verification tool\". Plain text, no HTML, no emails/phone numbers/IDs. Do not tell the agent what to do; a closing request for help is added automatically.>", "draft": "<HTML fragment — use <p>, <ul>/<ol>/<li>, <strong>, <br> tags. '
     'No markdown. No <html>/<body> wrapper tags. Just the inner resolution content. '
     'Do NOT include any greeting/salutation (e.g. Hi, Dear) or closing sign-off (e.g. Regards, Thank you) — the email template adds these automatically.>"}}'
 )
