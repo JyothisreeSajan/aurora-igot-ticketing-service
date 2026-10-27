@@ -24,6 +24,16 @@ ENABLED_CATEGORIES: list[str] = [
     "content_related_issue",
 ]
 
+# Use cases (finer than sub-category) not yet live in prod. The classifier tags them via
+# its "use_case" field; matching tickets are skipped exactly like a disabled category
+# (no draft, no Zoho update). Other use cases under the same sub-category are unaffected.
+# Supported: "designation_update_request", "profile_completion_check", "username_change_request".
+DISABLED_USE_CASES: list[str] = [
+    "designation_update_request",
+    "profile_completion_check",
+    "username_change_request",
+]
+
 # ── Email HTML Template ────────────────────────────────────────────────────────
 # Used by all graph nodes that produce a final customer-facing email response.
 # `name`  : user's first name (use "User" when name is unknown)
