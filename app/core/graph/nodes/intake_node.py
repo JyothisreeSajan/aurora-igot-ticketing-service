@@ -24,6 +24,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 
 from app.core.graph.state import TicketState
 from app.core.utils.constants import (
+    DISABLED_USE_CASES,
     ENABLED_CATEGORIES,
     JUNK_CONFIDENCE_THRESHOLD,
     VALIDATE_EMAIL,
@@ -180,6 +181,7 @@ def intake_node(state: TicketState) -> TicketState:
     main_category      = "general"
     sub_category       = ""
     sub_category_label = ""
+    use_case           = ""
     confidence         = 0.5
     reason             = ""
 
@@ -224,6 +226,7 @@ def intake_node(state: TicketState) -> TicketState:
         main_category = parsed.get("main_category", category)
         confidence    = float(parsed.get("confidence", 0.5))
         reason        = parsed.get("reason", "")
+        use_case      = (parsed.get("use_case") or "").strip().lower()
 
         # Sub-category resolution
         raw_sub_label = parsed.get("sub_category", "").strip()
@@ -260,43 +263,47 @@ def intake_node(state: TicketState) -> TicketState:
         logger.error(f"[intake] Classification failed: {e}")
 
     # ── 3.5. Feature Flag Validation: ENABLED_CATEGORIES ─────────────────────
+    category_disabled = False
     if ENABLED_CATEGORIES and "*" not in ENABLED_CATEGORIES:
         enabled_lower = {c.lower() for c in ENABLED_CATEGORIES}
-        if category.lower() not in enabled_lower and main_category.lower() not in enabled_lower:
-            logger.info(
-                f"[intake] Category '{category}' (main='{main_category}') is disabled "
-                f"by ENABLED_CATEGORIES flag {ENABLED_CATEGORIES}. Gracefully skipping workflow for ticket={ticket_id}"
-            )
-            step = _plan_step(
-                ticket_id,
-                "intake_node",
-                f"Category '{category}' is disabled by ENABLED_CATEGORIES feature flag. Gracefully skipping entire workflow.",
-                is_category_disabled=True,
-                category=category,
-                enabled_categories=ENABLED_CATEGORIES,
-            )
-            return {
-                **state,
-                "email":                 email,
-                "category":              category,
-                "main_category":         main_category,
-                "sub_category":          sub_category,
-                "sub_category_label":    sub_category_label,
-                "user_first_name":       user_first_name,
+        category_disabled = category.lower() not in enabled_lower and main_category.lower() not in enabled_lower
+    use_case_disabled = bool(use_case) and use_case in DISABLED_USE_CASES
+    if category_disabled or use_case_disabled:
+        logger.info(
+            f"[intake] Category '{category}' (main='{main_category}', use_case='{use_case}') is disabled "
+            f"by ENABLED_CATEGORIES {ENABLED_CATEGORIES} / DISABLED_USE_CASES {DISABLED_USE_CASES}. "
+            f"Gracefully skipping workflow for ticket={ticket_id}"
+        )
+        step = _plan_step(
+            ticket_id,
+            "intake_node",
+            f"Category '{category}' / use_case '{use_case}' is disabled by feature flag. Gracefully skipping entire workflow.",
+            is_category_disabled=True,
+            category=category,
+            enabled_categories=ENABLED_CATEGORIES,
+        )
+        return {
+            **state,
+            "email":                 email,
+            "category":              category,
+            "main_category":         main_category,
+            "sub_category":          sub_category,
+            "sub_category_label":    sub_category_label,
+            "user_first_name":       user_first_name,
+            "sop_categories":        sop_categories,
+            "confidence":            confidence,
+            "is_category_disabled":  True,
+            "enriched_context":   {
+                "classification_reason": reason,
                 "sop_categories":        sop_categories,
-                "confidence":            confidence,
-                "is_category_disabled":  True,
-                "enriched_context":   {
-                    "classification_reason": reason,
-                    "sop_categories":        sop_categories,
-                    "current_time":          current_time,
-                    "email":                 email,
-                },
-                "is_resolved":           True,
-                "is_junk":               False,
-                "final_response":        state.get("final_response", ""),
-                "graph_plan":            list(state.get("graph_plan") or []) + [step],
-            }
+                "current_time":          current_time,
+                "email":                 email,
+            },
+            "is_resolved":           True,
+            "is_junk":               False,
+            "final_response":        state.get("final_response", ""),
+            "graph_plan":            list(state.get("graph_plan") or []) + [step],
+        }
 
     # ── 4. Assemble enriched context ──────────────────────────────────────────
     enriched_context = {

@@ -253,6 +253,15 @@ CRITICAL CLASSIFICATION RULES & PROCESS:
      verified") only when approval/verification/pending language is ALSO present — a bare
      "cannot find/select this designation" message with no such language is SOP-P3.
 
+6C. USE_CASE TAGGING (independent of sub_category; leave "" when neither applies):
+   - "designation_update_request": the user asks to update/change/add their designation, or
+     cannot find/select a designation while updating their profile (no pending/approval language).
+   - "profile_completion_check": the user asks to check their profile completion percentage or
+     says it is not showing 100%.
+   - "username_change_request": the user asks to change/update their user name, display name or
+     profile name (the name shown next to the profile). A request to edit their regular first/last
+     NAME field is NOT this — leave use_case "" for that.
+
 7. CONFIDENCE SCORING:
    - Score your confidence strictly from 0.0 to 1.0 based on clarity and certainty of the match.
    - A score below 0.75 means the issue is ambiguous, contradictory, or lacks enough information and should be escalated to a human agent.
@@ -262,6 +271,7 @@ Respond ONLY with valid JSON — no markdown, no extra text:
   "category": "<one of the categories above, or 'general' if none matched or if the message is ambiguous/general>",
   "main_category": "<same value, exactly as listed>",
   "sub_category": "<exact human-readable sub-category label, or '' if none matched, or 'other' if general>",
+  "use_case": "<designation_update_request | profile_completion_check | username_change_request | ''>",
   "confidence": <float 0.0–1.0>,
   "reason": "<one sentence>"
 }}
