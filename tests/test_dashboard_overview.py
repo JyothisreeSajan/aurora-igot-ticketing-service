@@ -152,7 +152,7 @@ def test_metrics_counts_only_drafts_for_acceptance():
     m = dashboard._metrics(rows)
     assert (m.tickets_received, m.drafts_created, m.drafts_accepted, m.drafts_rejected, m.drafts_pending) == \
         (4, 3, 1, 1, 1)
-    assert m.success_rate == 50.0      # 1 / (1 + 1) — pending drafts are excluded
+    assert m.success_rate == 33.3      # 1 / 3 drafts created
     assert m.draft_coverage == 75.0
 
 
@@ -160,7 +160,7 @@ def test_metrics_drafts_without_feedback_are_pending_not_rejected():
     rows = [dashboard._TicketRow(t, date(2026, 10, 1), "c", "s", is_draft=True) for t in "abc"]
     m = dashboard._metrics(rows)
     assert (m.drafts_created, m.drafts_accepted, m.drafts_rejected, m.drafts_pending) == (3, 0, 0, 3)
-    assert m.success_rate is None
+    assert m.success_rate == 0.0
 
 
 @pytest.mark.parametrize("value, expected", [
@@ -198,7 +198,7 @@ def test_overview_defaults_to_current_month(fake_es):
     assert month["is_complete"] is False
     assert month["metrics"] == {
         "tickets_received": 7, "drafts_created": 5, "drafts_accepted": 3, "drafts_rejected": 1,
-        "drafts_pending": 1, "success_rate": 75.0, "draft_coverage": 71.4,
+        "drafts_pending": 1, "success_rate": 60.0, "draft_coverage": 71.4,
     }
 
 
@@ -217,7 +217,7 @@ def test_overview_latest_feedback_decides_and_missing_feedback_is_pending(fake_e
     assert subs["enrolment_issues"]["drafts_rejected"] == 1    # t3 (sent then deleted)
     general = cats["general"]["metrics"]                        # t5 has no feedback
     assert (general["drafts_rejected"], general["drafts_pending"]) == (0, 1)
-    assert general["success_rate"] is None
+    assert general["success_rate"] == 0.0
 
 
 def test_overview_categories_sorted_with_uncategorized_subcategory(fake_es):
