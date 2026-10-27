@@ -383,6 +383,7 @@ async def get_dashboard_analytics_post(filter_payload: AnalyticsDateFilter):
 #   drafts_rejected  → drafts whose latest feedback has is_helpful = false
 #   drafts_pending   → drafts with no usable feedback yet
 #                      (drafts_created - drafts_accepted - drafts_rejected)
+#   success_rate     → drafts_accepted / drafts_created × 100
 
 DASHBOARD_TZ_NAME = "Asia/Kolkata"
 DASHBOARD_TZ = ZoneInfo(DASHBOARD_TZ_NAME)
@@ -399,7 +400,7 @@ class OverviewMetrics(BaseModel):
     drafts_rejected: int
     drafts_pending: int = Field(..., description="Drafts with no accept/reject feedback yet")
     success_rate: Optional[float] = Field(
-        None, description="drafts_accepted / (drafts_accepted + drafts_rejected) × 100; null when no feedback"
+        None, description="drafts_accepted / drafts_created × 100; null when no drafts"
     )
     draft_coverage: Optional[float] = Field(None, description="drafts_created / tickets_received × 100; null when no tickets")
 
@@ -558,7 +559,7 @@ def _metrics(rows: Iterable[_TicketRow]) -> OverviewMetrics:
         drafts_accepted=accepted,
         drafts_rejected=rejected,
         drafts_pending=created - accepted - rejected,
-        success_rate=_pct(accepted, accepted + rejected),
+        success_rate=_pct(accepted, created),
         draft_coverage=_pct(created, received),
     )
 
