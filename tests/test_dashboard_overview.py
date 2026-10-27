@@ -21,7 +21,7 @@ client = TestClient(app)
 IST = ZoneInfo("Asia/Kolkata")
 FROZEN_NOW = datetime(2026, 10, 16, 18, 30, tzinfo=IST)
 URL = "/api/v1/dashboard/overview"
-COUNT_KEYS = ["tickets_received", "drafts_created", "drafts_accepted", "drafts_rejected"]
+COUNT_KEYS = ["tickets_received", "drafts_created", "drafts_accepted", "drafts_rejected", "drafts_pending"]
 
 
 def _utc(y, mo, d, h, mi=0) -> str:
@@ -62,7 +62,7 @@ FEEDBACK = [
     # Sent first, then deleted → rejected.
     _feedback("t3", True, _utc(2026, 10, 6, 13)),
     _feedback("t3", False, _utc(2026, 10, 7, 10)),
-    # t5 has no feedback → counted as rejected.
+    # t5 has no feedback → pending, not rejected.
     _feedback("t6", True, _utc(2026, 10, 16, 10)),
     _feedback("s1", True, _utc(2026, 10, 1, 9)),
 ]
@@ -146,12 +146,30 @@ def test_metrics_counts_only_drafts_for_acceptance():
     rows = [
         dashboard._TicketRow("a", date(2026, 10, 1), "c", "s", is_draft=True, is_accepted=True),
         dashboard._TicketRow("b", date(2026, 10, 1), "c", "s", is_draft=True, is_accepted=False),
-        dashboard._TicketRow("c", date(2026, 10, 1), "c", "s", is_draft=False),
+        dashboard._TicketRow("c", date(2026, 10, 1), "c", "s", is_draft=True),
+        dashboard._TicketRow("d", date(2026, 10, 1), "c", "s", is_draft=False),
     ]
     m = dashboard._metrics(rows)
-    assert (m.tickets_received, m.drafts_created, m.drafts_accepted, m.drafts_rejected) == (3, 2, 1, 1)
-    assert m.success_rate == 50.0
-    assert m.draft_coverage == 66.7
+    assert (m.tickets_received, m.drafts_created, m.drafts_accepted, m.drafts_rejected, m.drafts_pending) == \
+        (4, 3, 1, 1, 1)
+    assert m.success_rate == 50.0      # 1 / (1 + 1) — pending drafts are excluded
+    assert m.draft_coverage == 75.0
+
+
+def test_metrics_drafts_without_feedback_are_pending_not_rejected():
+    rows = [dashboard._TicketRow(t, date(2026, 10, 1), "c", "s", is_draft=True) for t in "abc"]
+    m = dashboard._metrics(rows)
+    assert (m.drafts_created, m.drafts_accepted, m.drafts_rejected, m.drafts_pending) == (3, 0, 0, 3)
+    assert m.success_rate is None
+
+
+@pytest.mark.parametrize("value, expected", [
+    (True, True), (1, True), ("true", True), ("True", True),
+    (False, False), (0, False), ("false", False), ("False", False),
+    (None, None), ("", None), ("yes", None),
+])
+def test_parse_is_helpful(value, expected):
+    assert dashboard._parse_is_helpful(value) is expected
 
 
 def test_metrics_empty_has_null_rates():
@@ -179,8 +197,8 @@ def test_overview_defaults_to_current_month(fake_es):
         ("2026-10", "2026-10-01", "2026-10-31", "2026-10-16")
     assert month["is_complete"] is False
     assert month["metrics"] == {
-        "tickets_received": 7, "drafts_created": 5, "drafts_accepted": 3, "drafts_rejected": 2,
-        "success_rate": 60.0, "draft_coverage": 71.4,
+        "tickets_received": 7, "drafts_created": 5, "drafts_accepted": 3, "drafts_rejected": 1,
+        "drafts_pending": 1, "success_rate": 75.0, "draft_coverage": 71.4,
     }
 
 
@@ -192,12 +210,14 @@ def test_overview_excludes_junk(fake_es):
     assert week3["metrics"]["tickets_received"] == 3  # t5, t6, t8 — t7 (junk) excluded
 
 
-def test_overview_latest_feedback_decides_and_missing_feedback_is_rejected(fake_es):
+def test_overview_latest_feedback_decides_and_missing_feedback_is_pending(fake_es):
     cats = {c["name"]: c for c in client.get(URL).json()["month"]["categories"]}
     subs = {s["name"]: s["metrics"] for s in cats["content_related_issue"]["subcategories"]}
     assert subs["certificate_issue"]["drafts_accepted"] == 2   # t1, t2 (deleted then sent)
     assert subs["enrolment_issues"]["drafts_rejected"] == 1    # t3 (sent then deleted)
-    assert cats["general"]["metrics"]["drafts_rejected"] == 1  # t5 has no feedback
+    general = cats["general"]["metrics"]                        # t5 has no feedback
+    assert (general["drafts_rejected"], general["drafts_pending"]) == (0, 1)
+    assert general["success_rate"] is None
 
 
 def test_overview_categories_sorted_with_uncategorized_subcategory(fake_es):
@@ -241,6 +261,7 @@ def test_overview_daily_stops_at_today_and_uses_ist_dates(fake_es):
     assert day["date"] == "2026-10-16" and day["is_today"] is True
     assert _counts(day["metrics"]) == {
         "tickets_received": 2, "drafts_created": 1, "drafts_accepted": 1, "drafts_rejected": 0,
+        "drafts_pending": 0,
     }
     assert {c["name"] for c in day["categories"]} == {"ca_apar_issue", "profile_and_user_management"}
 
@@ -250,7 +271,7 @@ def test_overview_previous_month(fake_es):
     assert prev["id"] == "2026-09"
     assert prev["metrics"] == {
         "tickets_received": 2, "drafts_created": 1, "drafts_accepted": 1, "drafts_rejected": 0,
-        "success_rate": 100.0, "draft_coverage": 50.0,
+        "drafts_pending": 0, "success_rate": 100.0, "draft_coverage": 50.0,
     }
 
 

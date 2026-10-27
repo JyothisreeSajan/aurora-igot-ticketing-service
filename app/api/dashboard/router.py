@@ -380,7 +380,9 @@ async def get_dashboard_analytics_post(filter_payload: AnalyticsDateFilter):
 #   drafts_created   → those tickets with status == "resolved" (AI drafted a reply)
 #   drafts_accepted  → drafts whose latest feedback in
 #                      `aurora_resolution_feedback` has is_helpful = true
-#   drafts_rejected  → drafts_created - drafts_accepted
+#   drafts_rejected  → drafts whose latest feedback has is_helpful = false
+#   drafts_pending   → drafts with no usable feedback yet
+#                      (drafts_created - drafts_accepted - drafts_rejected)
 
 DASHBOARD_TZ_NAME = "Asia/Kolkata"
 DASHBOARD_TZ = ZoneInfo(DASHBOARD_TZ_NAME)
@@ -395,7 +397,10 @@ class OverviewMetrics(BaseModel):
     drafts_created: int
     drafts_accepted: int
     drafts_rejected: int
-    success_rate: Optional[float] = Field(None, description="drafts_accepted / drafts_created × 100; null when no drafts")
+    drafts_pending: int = Field(..., description="Drafts with no accept/reject feedback yet")
+    success_rate: Optional[float] = Field(
+        None, description="drafts_accepted / (drafts_accepted + drafts_rejected) × 100; null when no feedback"
+    )
     draft_coverage: Optional[float] = Field(None, description="drafts_created / tickets_received × 100; null when no tickets")
 
 
@@ -485,7 +490,18 @@ class _TicketRow:
     category: str
     sub_category: str
     is_draft: bool
-    is_accepted: bool = False
+    is_accepted: Optional[bool] = None  # None → no feedback yet
+
+
+def _parse_is_helpful(value: Any) -> Optional[bool]:
+    """True / False for an explicit verdict; None when missing or unrecognised."""
+    if isinstance(value, str):
+        value = value.strip().lower()
+    if value in (True, 1, "true"):
+        return True
+    if value in (False, 0, "false"):
+        return False
+    return None
 
 
 def _slugify(value: str) -> str:
@@ -529,18 +545,20 @@ def _pct(numerator: int, denominator: int) -> Optional[float]:
 
 
 def _metrics(rows: Iterable[_TicketRow]) -> OverviewMetrics:
-    received = created = accepted = 0
+    received = created = accepted = rejected = 0
     for r in rows:
         received += 1
         if r.is_draft:
             created += 1
-            accepted += int(r.is_accepted)
+            accepted += r.is_accepted is True
+            rejected += r.is_accepted is False
     return OverviewMetrics(
         tickets_received=received,
         drafts_created=created,
         drafts_accepted=accepted,
-        drafts_rejected=created - accepted,
-        success_rate=_pct(accepted, created),
+        drafts_rejected=rejected,
+        drafts_pending=created - accepted - rejected,
+        success_rate=_pct(accepted, accepted + rejected),
         draft_coverage=_pct(created, received),
     )
 
@@ -619,7 +637,7 @@ def _fetch_ticket_rows(start: date, end: date) -> List[_TicketRow]:
 
     # Latest feedback per drafted ticket decides accepted vs rejected.
     draft_ids = list({r.ticket_id for r in rows if r.is_draft})
-    latest: Dict[str, Tuple[datetime, bool]] = {}
+    latest: Dict[str, Tuple[datetime, Optional[bool]]] = {}
     epoch = datetime.min.replace(tzinfo=timezone.utc)
     try:
         for i in range(0, len(draft_ids), _FEEDBACK_CHUNK):
@@ -632,7 +650,7 @@ def _fetch_ticket_rows(start: date, end: date) -> List[_TicketRow]:
                 tid = str(src.get("ticket_id"))
                 submitted = _parse_es_datetime(src.get("submitted_on")) or epoch
                 if tid not in latest or submitted >= latest[tid][0]:
-                    latest[tid] = (submitted, src.get("is_helpful") in (True, 1, "true", "True"))
+                    latest[tid] = (submitted, _parse_is_helpful(src.get("is_helpful")))
     except Exception as exc:
         logger.error("[dashboard] Failed to scan feedback index '%s': %s", feedback_index, exc)
         raise HTTPException(
