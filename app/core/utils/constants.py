@@ -37,7 +37,22 @@ DISABLED_USE_CASES: list[str] = [
 # Used by all graph nodes that produce a final customer-facing email response.
 # `name`  : user's first name (use "User" when name is unknown)
 # `body`  : HTML fragment produced by the LLM (<p>, <ul>, <ol>, <li>, <strong>, <br>)
-EMAIL_HTML_TEMPLATE = """<html><body><p>Hi {name},</p><p>Greetings from Karmayogi Bharat Support.</p><div>{body}</div><br><p>Regards,<br>Support Team<br>Karmayogi Bharat</p></body></html>"""
+#
+# AURORA_DRAFT_MARKER is an invisible span appended to every Aurora draft so the
+# Zoho Desk extension can tell Aurora's drafts apart from drafts written by agents
+# (both are authored by the same Zoho agent). Check for this exact string in the
+# thread `content` field.
+AURORA_DRAFT_MARKER = "aurora-draft"
+_AURORA_MARKER_HTML = (
+    '<span style="display:none;font-size:0;max-height:0;overflow:hidden">'
+    f"{AURORA_DRAFT_MARKER}</span>"
+)
+EMAIL_HTML_TEMPLATE = (
+    "<html><body><p>Hi {name},</p><p>Greetings from Karmayogi Bharat Support.</p>"
+    "<div>{body}</div><br><p>Regards,<br>Support Team<br>Karmayogi Bharat</p>"
+    + _AURORA_MARKER_HTML
+    + "</body></html>"
+)
 
 
 def build_email_html(body: str, name: str = "User") -> str:
