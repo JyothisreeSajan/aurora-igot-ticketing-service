@@ -286,18 +286,6 @@ def _designation_page_response(data, total_count):
     return _mock_response({"result": {"result": {"data": data, "totalCount": total_count}}})
 
 
-@pytest.fixture(autouse=True)
-def _reset_designation_cache():
-    """search_designation caches results in a module-level dict; reset it
-    around every test in this module so tests don't leak state into each
-    other (or into other test files importing the same module)."""
-    put._DESIGNATION_CACHE["data"] = None
-    put._DESIGNATION_CACHE["fetched_at"] = None
-    yield
-    put._DESIGNATION_CACHE["data"] = None
-    put._DESIGNATION_CACHE["fetched_at"] = None
-
-
 class TestSearchDesignation:
     @patch("app.core.tools.profile_user_management_tools.requests.post")
     def test_exact_match(self, mock_post):
@@ -343,29 +331,32 @@ class TestSearchDesignation:
         assert result["designation"]["id"] == "d1"
 
     @patch("app.core.tools.profile_user_management_tools.requests.post")
-    def test_pagination_is_followed_until_total_count(self, mock_post):
-        page1 = [{"id": f"d{i}", "designation": f"Designation {i}"} for i in range(100)]
-        page2 = [{"id": "d100", "designation": "Special Officer"}]
-        mock_post.side_effect = [
-            _designation_page_response(page1, 101),
-            _designation_page_response(page2, 101),
-        ]
-
-        result = json.loads(search_designation.func("special officer"))
-
-        assert mock_post.call_count == 2
-        assert result["match_type"] == "exact"
-        assert result["designation"]["id"] == "d100"
-
-    @patch("app.core.tools.profile_user_management_tools.requests.post")
-    def test_results_are_cached_across_calls(self, mock_post):
-        data = [{"id": "d1", "designation": "Section Officer"}]
+    def test_sends_search_string_and_first_page(self, mock_post):
+        data = [{"id": "DESG-002405", "designation": "Radiographer B"}]
         mock_post.return_value = _designation_page_response(data, len(data))
 
-        search_designation.func("Section Officer")
-        search_designation.func("Section Officer")
+        search_designation.func("Radiographer B")
 
+        payload = mock_post.call_args.kwargs["json"]
+        assert payload["searchString"] == "Radiographer B"
+        assert payload["pageNumber"] == 0
+        assert payload["pageSize"] == 99
+        assert payload["filterCriteriaMap"] == {"status": "Active"}
         assert mock_post.call_count == 1
+
+    @patch("app.core.tools.profile_user_management_tools.requests.post")
+    def test_exact_match_picked_from_many_results(self, mock_post):
+        data = [
+            {"id": "DESG-002839", "designation": "Senior Radiographer B"},
+            {"id": "DESG-002405", "designation": "Radiographer B"},
+            {"id": "DESG-002406", "designation": "Radiographer C"},
+        ]
+        mock_post.return_value = _designation_page_response(data, len(data))
+
+        result = json.loads(search_designation.func("radiographer b"))
+
+        assert result["match_type"] == "exact"
+        assert result["designation"]["id"] == "DESG-002405"
 
     @patch("app.core.tools.profile_user_management_tools.requests.post")
     def test_fetch_exception_is_handled(self, mock_post):
@@ -375,77 +366,6 @@ class TestSearchDesignation:
 
         assert result["match_type"] == "error"
         assert "error" in result
-
-
-# ── SOP-P3 STEP 1 — _fetch_all_designations retry/TTL hardening ────────────
-# Added for the production ~20,743-designation scale, where a single page can
-# intermittently time out or come back with a null body (the classic
-# max_result_window signature past record #10,000).
-
-class TestFetchAllDesignationsRetryAndCaching:
-    def test_ttl_is_one_day(self):
-        assert put._DESIGNATION_CACHE_TTL_SECONDS == 3600 * 24
-
-    @patch("app.core.tools.profile_user_management_tools.requests.post")
-    def test_page_retries_after_timeout_then_succeeds(self, mock_post):
-        data = [{"id": "d1", "designation": "Section Officer"}]
-        mock_post.side_effect = [
-            requests.exceptions.Timeout("read timed out"),
-            _designation_page_response(data, len(data)),
-        ]
-
-        result = json.loads(search_designation.func("Section Officer"))
-
-        assert result["match_type"] == "exact"
-        assert result["designation"]["id"] == "d1"
-        assert mock_post.call_count == 2
-
-    @patch("app.core.tools.profile_user_management_tools.requests.post")
-    def test_null_body_page_is_retried_then_succeeds(self, mock_post):
-        data = [{"id": "d1", "designation": "Section Officer"}]
-        mock_post.side_effect = [
-            _mock_response({"result": {"result": None}}),  # 200 OK, empty body — the
-                                                             # production 10k-wall signature
-            _designation_page_response(data, len(data)),
-        ]
-
-        result = json.loads(search_designation.func("Section Officer"))
-
-        assert result["match_type"] == "exact"
-        assert mock_post.call_count == 2
-
-    @patch("app.core.tools.profile_user_management_tools.requests.post")
-    def test_page_stops_gracefully_after_exhausting_retries(self, mock_post):
-        # Page 1 succeeds with 100 of 150 total; page 2 fails all 3 attempts —
-        # the fetch must stop cleanly with page 1's data rather than crash the
-        # whole tool call, since production has ~200+ pages and one bad page
-        # shouldn't take down the entire designation check.
-        page1 = [{"id": f"d{i}", "designation": f"Designation {i}"} for i in range(100)]
-        mock_post.side_effect = [
-            _designation_page_response(page1, 150),
-            requests.exceptions.Timeout("read timed out"),
-            requests.exceptions.Timeout("read timed out"),
-            requests.exceptions.Timeout("read timed out"),
-        ]
-
-        result = json.loads(search_designation.func("Designation 5"))
-
-        assert result["match_type"] == "exact"
-        assert result["designation"]["id"] == "d5"
-        assert mock_post.call_count == 4  # 1 (page 1) + 3 (page 2 retries)
-
-    @patch("app.core.tools.profile_user_management_tools.requests.post")
-    def test_first_page_exhausting_retries_yields_not_found_not_error(self, mock_post):
-        # A total fetch failure on the very first page currently surfaces as
-        # an empty designation list — search_designation still resolves,
-        # match_type="not_found" (which SOP-P3 safely escalates to a human),
-        # not a raised exception.
-        mock_post.side_effect = [requests.exceptions.Timeout("read timed out")] * 3
-
-        result = json.loads(search_designation.func("Section Officer"))
-
-        assert result["match_type"] == "not_found"
-        assert mock_post.call_count == 3
 
 
 # ── SOP-P3 STEP 2 — get_user_root_org_id ────────────────────────────────────

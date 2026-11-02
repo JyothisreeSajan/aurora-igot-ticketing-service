@@ -477,111 +477,49 @@ def get_department_mdo_admin(department_name: str) -> str:
 
 # ── SOP-P3 STEP 1 — verify the designation against master data ─────────────
 
-_DESIGNATION_CACHE: dict = {"data": None, "fetched_at": None}
-_DESIGNATION_CACHE_TTL_SECONDS = 3600 * 24  # 1 day — designation master data changes
-                                             # rarely (weeks/months), so the
-                                             # slow full paginated fetch only
-                                             # needs to happen once a day.
+_DESIGNATION_SEARCH_PAGE_SIZE = 99
 
 
-def _fetch_all_designations() -> list[dict]:
-    """Fetch (or return cached) full active-designation master list.
+def _search_designations(designation_name: str) -> list[dict]:
+    """Search the platform's active designations server-side by name.
 
-    Response shape (confirmed via live curl against the real endpoint):
-      {"result": {"result": {"data": [...], "totalCount": N}}} — note the
-      DOUBLE-nested "result" key, easy to miss.
+    Response shape: {"result": {"result": {"data": [{"id", "designation"}],
+    "totalCount": N}}} — note the DOUBLE-nested "result" key.
     """
-    import time
-
-    now = time.time()
-    if (
-        _DESIGNATION_CACHE["data"] is not None
-        and (now - _DESIGNATION_CACHE["fetched_at"]) < _DESIGNATION_CACHE_TTL_SECONDS
-    ):
-        return _DESIGNATION_CACHE["data"]
-
     url = f"{IGOT_API_HOST_URL}/apis/public/v8/designation/search"
     headers = {"Authorization": f"Bearer {IGOT_KEY}", "Content-Type": CONTENT_TYPE_JSON}
-    all_designations: list[dict] = []
-    page_size = 100  # confirmed API max — pageSize > 100 returns HTTP 400
-    page_number = 1
-    total_count = None
-    max_retries = 3  # production has ~200+ pages to fetch; one slow/timed-out
-                      # or malformed page shouldn't fail the entire list —
-                      # retry that single page a few times first.
-
-    while total_count is None or len(all_designations) < total_count:
-        payload = {
-            "pageNumber": page_number,
-            "pageSize": page_size,
-            "filterCriteriaMap": {"status": "Active"},
-            "requestedFields": ["id", "designation"],
-        }
-        for attempt in range(1, max_retries + 1):
-            try:
-                resp = requests.post(url, json=payload, headers=headers, timeout=15)
-                resp.raise_for_status()
-                inner = resp.json().get("result", {}).get("result")
-                if inner is None:
-                    # HTTP 200 but a null body — this is the production 10k-wall
-                    # signature (or a transient hiccup below that point). Retrying
-                    # won't get past the wall, but it's cheap insurance against a
-                    # genuine transient blip, and either way we stop cleanly once
-                    # retries are exhausted rather than crashing the whole fetch.
-                    raise ValueError("designation search returned an empty/null result body")
-                break
-            except (requests.exceptions.RequestException, ValueError) as e:
-                if attempt == max_retries:
-                    logger.warning(
-                        f"[profile_user_management_tools] designation page {page_number} "
-                        f"failed after {max_retries} attempts ({e}) — stopping with "
-                        f"{len(all_designations)} designations fetched so far."
-                    )
-                    total_count = len(all_designations)
-                    inner = None
-                    break
-                logger.warning(
-                    f"[profile_user_management_tools] designation page {page_number} "
-                    f"attempt {attempt} failed ({e}), retrying..."
-                )
-        if inner is None:
-            break
-        page_data = inner.get("data", [])
-        total_count = inner.get("totalCount", len(page_data))
-        if not page_data:
-            break
-        all_designations.extend(page_data)
-        page_number += 1
-
-    _DESIGNATION_CACHE["data"] = all_designations
-    _DESIGNATION_CACHE["fetched_at"] = now
-    logger.info(f"[profile_user_management_tools] Cached {len(all_designations)} active designations.")
-    return all_designations
+    payload = {
+        "pageNumber": 0,
+        "pageSize": _DESIGNATION_SEARCH_PAGE_SIZE,
+        "filterCriteriaMap": {"status": "Active"},
+        "searchString": designation_name.strip(),
+        "requestedFields": ["id", "designation"],
+    }
+    resp = requests.post(url, json=payload, headers=headers, timeout=15)
+    resp.raise_for_status()
+    inner = (resp.json().get("result") or {}).get("result") or {}
+    return inner.get("data") or []
 
 
 @tool
 def search_designation(designation_name: str) -> str:
-    """Verify a user-reported designation against the platform's full active
-    designation master data (cached in-memory for 1 day — this API has no
-    server-side name search, so it fetches everything, paginated, once per
-    cache window, and matches locally).
+    """Verify a user-reported designation against the platform's active
+    designations using the designation search API (server-side searchString).
 
-    Used in SOP-P3 STEP 1. Matching is done here, not left to the caller: a
-    literal (case-insensitive, whitespace-normalized) match is exact; failing
-    that, word-PREFIX matching (e.g. "sec" matches "Section" but never
-    matches merely appearing inside "Secretary") finds plausible candidates —
-    a single candidate is treated as the confident match too, and 2+ is
-    ambiguous, never a loose substring guess.
+    Used in SOP-P3 STEP 1. Matching on the returned results is done here, not
+    left to the caller: a literal (case-insensitive, whitespace-normalized)
+    match is exact and its id is returned; failing that, word-PREFIX matching
+    (e.g. "sec" matches "Section" but never matches merely appearing inside
+    "Secretary") finds plausible candidates — a single candidate is treated as
+    the confident match too, and 2+ is ambiguous, never a loose substring guess.
 
     Returns match_type: "exact" (a literal match, or exactly one plausible
     word-prefix candidate), "ambiguous" (2+ plausible candidates, the user
-    must confirm which), or "not_found" (also returned, safely, if the
-    designation falls past this endpoint's ~10,000 record production limit —
-    SOP-P3 escalates "not_found" to a human rather than ever telling the user
-    their designation doesn't exist).
+    must confirm which), or "not_found" (SOP-P3 escalates "not_found" to a
+    human rather than ever telling the user their designation doesn't exist).
     """
     try:
-        all_designations = _fetch_all_designations()
+        all_designations = _search_designations(designation_name)
     except Exception as e:
         logger.error(f"[profile_user_management_tools] search_designation error: {e}")
         return json.dumps({"query": designation_name, "match_type": "error", "error": str(e)})

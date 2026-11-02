@@ -23,7 +23,7 @@ Verification, Designation/Group, and Profile Update Use Cases
 | `get_yp_am_details` | `(ministry_or_state)` | YP/SPOC fallback when no MDO Admin exists — reused from login_issue_tool.py (SOP-A1 STEP 3, Edge Case 2, SOP-A2 fallback) |
 | `search_organization` | `(org_name)` | Search for an organization by EXACT name (case-insensitive, no partial matching) via the Org Search API (SOP-A1 Edge Case 2) |
 | `search_organization_under_ministry_or_state` | `(ministry_or_state_name, org_name)` | Second-attempt search when the exact name fails: matches the Ministry/State by name, then searches (partial match) for the org under it via the Org Hierarchy Search API (SOP-A1 Edge Case 2) |
-| `search_designation` | `(designation_name)` | Fetch the full active-designation master list — matching against the user's wording is done by the LLM, conservatively (word-boundary, never loose substring) (SOP-P3 STEP 1) |
+| `search_designation` | `(designation_name)` | Search active designations server-side by name (searchString); the tool matches the results conservatively (exact, then word-prefix — never loose substring) and returns the matched id (SOP-P3 STEP 1) |
 | `get_user_root_org_id` | `(email)` | Resolve the user's own `rootOrgId` via email → user_id → User Read API (SOP-P3 STEP 2) |
 | `get_org_imported_designations` | `(root_org_id)` | Fetch which designations a specific org's MDO has actually imported, via the Org Framework Read API — response shape unverified against a live call, parsing may need adjustment (SOP-P3 STEP 2) |
 | `get_user_profile` | `(email)` | Ticket owner's OWN organization/ministry details — reused from profile_update_tool.py (SOP-A2 STEP 2A/3.1.1, YP fallback input) |
