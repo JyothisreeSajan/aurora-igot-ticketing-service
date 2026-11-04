@@ -189,7 +189,7 @@ def test_update_ticket_direct_skips_tag_when_no_draft_id_and_survives_missing_em
          patch("app.services.zoho_service.create_draft_reply", new_callable=AsyncMock,
                return_value={}), \
          patch("app.services.zoho_service.ensure_aurora_tag", new_callable=AsyncMock) as tag:
-        assert zoho_tools.update_zoho_ticket_direct("T1", "body") == "unknown"
+        assert zoho_tools.update_zoho_ticket_direct("T1", "body") == ""
     tag.assert_not_called()
 
 

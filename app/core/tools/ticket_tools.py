@@ -127,8 +127,11 @@ def notify_user(state: TicketState) -> TicketState:
         and not state.get("escalated_to_human")
         and state.get("is_resolved", False)
     )
+    draft_id = ""
     if ai_resolved:
-        update_zoho_ticket_direct(ticket_id, response, "Resolved")
+        draft_id = update_zoho_ticket_direct(ticket_id, response, "Resolved")
+        # Carried on the state so ticket_store persists it after the graph finishes.
+        state = {**state, "zoho_draft_id": draft_id, "draft_created": bool(draft_id)}
     else:
         logger.info(
             f"[notify] Skipping Zoho draft for ticket {ticket_id} "
@@ -150,6 +153,8 @@ def notify_user(state: TicketState) -> TicketState:
         outcome = "junk"
     elif not ai_resolved:
         outcome = "skipped_zoho"
+    elif not draft_id:
+        outcome = "draft_failed"
     else:
         outcome = "resolved"
     log_ticket_outcome(state, outcome=outcome)
@@ -180,6 +185,8 @@ def log_ticket_outcome(state: TicketState, outcome: str) -> None:
                 "escalated_to_human":  state.get("escalated_to_human", False),
                 "escalation_reason":   state.get("escalation_reason", ""),
                 "outcome":             outcome,
+                "zoho_draft_id":       state.get("zoho_draft_id", ""),
+                "draft_created":       state.get("draft_created", False),
                 "timestamp":           datetime.now(timezone.utc).isoformat(),
             }
         )
