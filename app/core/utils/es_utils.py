@@ -138,7 +138,8 @@ class ESManager:
                             "comments":           _txt(),
                             "submitted_on":       _date(),
                             "ticket_created_on":  _date(),
-                            "l1_support_team":    _kw()
+                            "l1_support_team":    _kw(),
+                            "draft_id":           _kw()
                         }
                     }
                 }

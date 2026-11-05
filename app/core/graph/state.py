@@ -70,5 +70,7 @@ class TicketState(TypedDict, total=False):
     escalation_reason:   str
     handoff_reason:      str      # short reason the model gave when it escalated (shown in the private Zoho comment)
     api_failure:         bool     # a Karmayogi API/tool call failed in the latest execute pass
+    zoho_draft_id:       str      # id of the Zoho draft reply Aurora created in this run ("" if none)
+    draft_created:       bool     # True only when Zoho returned a draft id in this run
     error:               str      # populated if something crashes
 

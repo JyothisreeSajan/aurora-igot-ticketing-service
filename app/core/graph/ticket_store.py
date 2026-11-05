@@ -43,8 +43,22 @@ ES_INDEX = "aurora_igot_user_tickets"
 _llm     = ChatGoogleGenerativeAI(model=get_llm_model(GraphStage.TICKET_STORE), temperature=0)
 
 
+# Draft-tracking fields (Aurora's Zoho draft ids). Added to existing indices by
+# _ensure_draft_mapping because _ensure_index only creates a missing index.
+_DRAFT_PROPERTIES = {
+    "zoho_draft_id":    {"type": "keyword"},   # latest Aurora draft on the ticket
+    "zoho_draft_ids":   {"type": "keyword"},   # every Aurora draft on the ticket (array)
+    "draft_created":    {"type": "boolean"},
+    "draft_created_at": {"type": "date"},
+}
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _has_new_draft(state: dict) -> bool:
+    return bool(state.get("draft_created") and state.get("zoho_draft_id"))
 
 
 def _ticket_status(state: dict) -> str:
@@ -117,14 +131,36 @@ class TicketStore:
                                     "retry_count":            {"type": "integer"},
                                     "created_at":             {"type": "date"},
                                     "updated_at":             {"type": "date"},
+                                    **_DRAFT_PROPERTIES,
                                 }
                             }
                         }
                     },
                 )
                 logger.info(f"[ticket_store] Created ES index '{ES_INDEX}'.")
+            else:
+                self._ensure_draft_mapping(c)
         except Exception as e:
             logger.warning(f"[ticket_store] _ensure_index: {e}")
+
+    def _ensure_draft_mapping(self, c) -> None:
+        """Additively add the draft-tracking fields to an index created before they existed."""
+        try:
+            props = c.indices.get_mapping(index=ES_INDEX)[ES_INDEX]["mappings"]
+            props = props.get("_doc", props).get("properties", {})
+            if all(f in props for f in _DRAFT_PROPERTIES):
+                return
+            try:
+                c.indices.put_mapping(
+                    index=ES_INDEX, doc_type="_doc", include_type_name=True,
+                    body={"properties": _DRAFT_PROPERTIES},
+                )
+            except Exception:
+                # Typeless fallback for clusters that reject include_type_name.
+                c.indices.put_mapping(index=ES_INDEX, body={"properties": _DRAFT_PROPERTIES})
+            logger.info(f"[ticket_store] Added draft-tracking fields to '{ES_INDEX}' mapping.")
+        except Exception as e:
+            logger.warning(f"[ticket_store] _ensure_draft_mapping: {e}")
 
     # ── Create ────────────────────────────────────────────────────────────────
 
@@ -158,6 +194,13 @@ class TicketStore:
             "created_at":             ts,
             "updated_at":             ts,
         }
+        if _has_new_draft(state):
+            doc.update({
+                "zoho_draft_id":    state["zoho_draft_id"],
+                "zoho_draft_ids":   [state["zoho_draft_id"]],
+                "draft_created":    True,
+                "draft_created_at": ts,
+            })
 
         try:
             self._client().index(index=ES_INDEX, id=ticket_id, document=doc)
@@ -198,6 +241,32 @@ class TicketStore:
                         f"awaiting={is_awaiting}")
         except Exception as e:
             logger.error(f"[ticket_store] update_ticket failed: {e}")
+            return
+
+        # A turn that created no draft must not touch the draft fields.
+        if _has_new_draft(state):
+            self._append_draft(ticket_id, state["zoho_draft_id"], ts)
+
+    def _append_draft(self, ticket_id: str, draft_id: str, ts: str) -> None:
+        """Append a draft id to zoho_draft_ids (no duplicates) and make it the latest."""
+        script = {
+            "source": """
+                if (ctx._source.zoho_draft_ids == null) { ctx._source.zoho_draft_ids = []; }
+                if (!ctx._source.zoho_draft_ids.contains(params.draft_id)) {
+                    ctx._source.zoho_draft_ids.add(params.draft_id);
+                }
+                ctx._source.zoho_draft_id    = params.draft_id;
+                ctx._source.draft_created    = true;
+                ctx._source.draft_created_at = params.ts;
+            """,
+            "lang": "painless",
+            "params": {"draft_id": draft_id, "ts": ts},
+        }
+        try:
+            self._client().update(index=ES_INDEX, doc_type="_doc", id=ticket_id, body={"script": script})
+            logger.info(f"[ticket_store] Recorded draft_id={draft_id} on ticket={ticket_id}")
+        except Exception as e:
+            logger.error(f"[ticket_store] _append_draft failed for ticket={ticket_id}: {e}")
 
     # ── Query ─────────────────────────────────────────────────────────────────
 

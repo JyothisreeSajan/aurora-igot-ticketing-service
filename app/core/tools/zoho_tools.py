@@ -115,12 +115,19 @@ def update_zoho_ticket_direct(
         # Graph nodes are sync; run the async draft call in a new event loop
         result = _run_coro_sync(_run(), timeout=30)
 
-        draft_id = result.get("id", "unknown")
+        draft_id = result.get("id") if isinstance(result, dict) else None
+        if not draft_id:
+            # No id means no draft we can trace back to — treat as a failure.
+            logger.warning(
+                f"[zoho_tools] Draft reply response for ticket {ticket_id} had no id "
+                f"(response={result})."
+            )
+            return ""
         logger.info(
             f"[zoho_tools] Draft reply created: draft_id={draft_id} "
             f"ticket={ticket_id} status={result.get('status')}"
         )
-        return draft_id
+        return str(draft_id)
 
     except ZohoAPIError as e:
         logger.error(f"[zoho_tools] Zoho API error for ticket {ticket_id}: {e}")
