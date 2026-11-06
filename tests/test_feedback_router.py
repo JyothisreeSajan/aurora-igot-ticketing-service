@@ -55,7 +55,7 @@ def test_ticket_lookup_fetches_only_id_and_draft_fields(es):
     client.post(URL, json=BODY)
     get_kwargs = es.get.call_args.kwargs
     assert get_kwargs["id"] == "T-1"
-    assert get_kwargs["source_includes"] == ["ticket_id", "zoho_draft_id", "zoho_draft_ids"]
+    assert get_kwargs["_source"] == ["ticket_id", "zoho_draft_id", "zoho_draft_ids"]
     search_body = es.search.call_args.kwargs["body"]
     assert search_body["_source"] == ["ticket_id", "draft_id"]
     assert search_body["query"] == {"bool": {"filter": [
@@ -163,3 +163,26 @@ def test_update_with_null_ticket_created_on_stores_none(existing_feedback):
     es = existing_feedback
     client.post(URL, json={**BODY, "ticket_created_on": None})
     assert es.update.call_args.kwargs["doc"]["ticket_created_on"] is None
+
+
+# ── Real ES client signature (a MagicMock accepts any kwarg name) ─────────────
+
+@pytest.fixture
+def real_es_client():
+    from elasticsearch import Elasticsearch
+    real = Elasticsearch(["http://localhost:1"])
+    with patch.object(feedback.es_manager, "client", real):
+        yield real
+
+
+def test_ticket_lookup_uses_arguments_the_real_es_client_accepts(real_es_client):
+    ticket = {"_source": {"ticket_id": "T-1", "zoho_draft_ids": ["D-1"]}}
+    with patch.object(real_es_client.transport, "perform_request", return_value=ticket) as perform:
+        assert feedback._ticket_has_draft("T-1", "D-1") == (True, True)
+    sent = perform.call_args.kwargs["params"]["_source"]
+    assert sent in ("ticket_id,zoho_draft_id,zoho_draft_ids", b"ticket_id,zoho_draft_id,zoho_draft_ids")
+
+
+def test_ticket_lookup_with_real_client_returns_false_for_unknown_ticket(real_es_client):
+    with patch.object(real_es_client.transport, "perform_request", side_effect=_not_found()):
+        assert feedback._ticket_has_draft("T-1", "D-1") == (False, False)
