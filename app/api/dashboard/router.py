@@ -377,13 +377,18 @@ async def get_dashboard_analytics_post(filter_payload: AnalyticsDateFilter):
 #
 #   tickets_received → tickets in `aurora_igot_user_tickets` (by created_at, IST),
 #                      excluding the "junk" category
-#   drafts_created   → those tickets with status == "resolved" (AI drafted a reply)
-#   drafts_accepted  → drafts whose latest feedback in
-#                      `aurora_resolution_feedback` has is_helpful = true
-#   drafts_rejected  → drafts whose latest feedback has is_helpful = false
-#   drafts_pending   → drafts with no usable feedback yet
-#                      (drafts_created - drafts_accepted - drafts_rejected)
-#   success_rate     → drafts_accepted / drafts_created × 100
+#   tickets_processed → those tickets with status == "resolved", i.e. tickets
+#                       processed by Aurora (counted once per ticket)
+#   drafts_created    → Aurora drafts on processed tickets (`zoho_draft_ids`;
+#                       at least 1 per processed ticket for older records)
+#   feedback          → `aurora_resolution_feedback` holds one record per
+#                       (ticket_id, draft_id); each ticket keeps helpful_count /
+#                       not_helpful_count across its drafts
+#   drafts_accepted   → sum of helpful_count
+#   drafts_rejected   → sum of not_helpful_count
+#   drafts_pending    → drafts with no feedback yet
+#                       (per ticket: drafts - helpful - not helpful, never below 0)
+#   success_rate      → drafts_accepted / drafts_created × 100
 
 DASHBOARD_TZ_NAME = "Asia/Kolkata"
 DASHBOARD_TZ = ZoneInfo(DASHBOARD_TZ_NAME)
@@ -395,14 +400,14 @@ _FEEDBACK_CHUNK = 1000
 
 class OverviewMetrics(BaseModel):
     tickets_received: int
-    drafts_created: int
-    drafts_accepted: int
-    drafts_rejected: int
-    drafts_pending: int = Field(..., description="Drafts with no accept/reject feedback yet")
+    tickets_processed: int = Field(..., description="Tickets Aurora processed (status == resolved)")
+    drafts_created: int = Field(..., description="Aurora drafts across processed tickets")
+    drafts_accepted: int = Field(..., description="Drafts marked helpful (sum of per-ticket helpful_count)")
+    drafts_rejected: int = Field(..., description="Drafts marked not helpful (sum of per-ticket not_helpful_count)")
+    drafts_pending: int = Field(..., description="Drafts with no helpful / not-helpful feedback yet")
     success_rate: Optional[float] = Field(
         None, description="drafts_accepted / drafts_created × 100; null when no drafts"
     )
-    draft_coverage: Optional[float] = Field(None, description="drafts_created / tickets_received × 100; null when no tickets")
 
 
 class OverviewSubcategory(BaseModel):
@@ -490,8 +495,10 @@ class _TicketRow:
     day: date
     category: str
     sub_category: str
-    is_draft: bool
-    is_accepted: Optional[bool] = None  # None → no feedback yet
+    is_draft: bool              # processed by Aurora
+    draft_count: int = 0        # Aurora drafts on the ticket
+    helpful_count: int = 0      # feedback records (one per Aurora draft) with is_helpful = true
+    not_helpful_count: int = 0  # feedback records with is_helpful = false
 
 
 def _parse_is_helpful(value: Any) -> Optional[bool]:
@@ -546,21 +553,23 @@ def _pct(numerator: int, denominator: int) -> Optional[float]:
 
 
 def _metrics(rows: Iterable[_TicketRow]) -> OverviewMetrics:
-    received = created = accepted = rejected = 0
+    received = processed = created = accepted = rejected = pending = 0
     for r in rows:
         received += 1
         if r.is_draft:
-            created += 1
-            accepted += r.is_accepted is True
-            rejected += r.is_accepted is False
+            processed += 1
+            created += r.draft_count
+            accepted += r.helpful_count
+            rejected += r.not_helpful_count
+            pending += max(r.draft_count - r.helpful_count - r.not_helpful_count, 0)
     return OverviewMetrics(
         tickets_received=received,
+        tickets_processed=processed,
         drafts_created=created,
         drafts_accepted=accepted,
         drafts_rejected=rejected,
-        drafts_pending=created - accepted - rejected,
+        drafts_pending=pending,
         success_rate=_pct(accepted, created),
-        draft_coverage=_pct(created, received),
     )
 
 
@@ -593,6 +602,14 @@ def _local_day_start_utc(day: date) -> str:
     return datetime.combine(day, time.min, DASHBOARD_TZ).astimezone(timezone.utc).isoformat()
 
 
+def _draft_count(src: Dict[str, Any]) -> int:
+    """Distinct Aurora drafts on a processed ticket; 1 for older records without draft ids."""
+    ids = {str(i) for i in (src.get("zoho_draft_ids") or []) if i}
+    if src.get("zoho_draft_id"):
+        ids.add(str(src["zoho_draft_id"]))
+    return max(len(ids), 1)
+
+
 def _fetch_ticket_rows(start: date, end: date) -> List[_TicketRow]:
     """Load one row per ticket created between start and end (inclusive, IST) with its feedback outcome."""
     user_tickets_index = getattr(es_manager, "user_tickets_index", "aurora_igot_user_tickets")
@@ -612,7 +629,8 @@ def _fetch_ticket_rows(start: date, end: date) -> List[_TicketRow]:
                 "must_not": [{"term": {"category": JUNK_CATEGORY}}],
             }
         },
-        "_source": ["ticket_id", "created_at", "category", "sub_category", "status"],
+        "_source": ["ticket_id", "created_at", "category", "sub_category", "status",
+                    "zoho_draft_id", "zoho_draft_ids"],
     }
 
     rows: List[_TicketRow] = []
@@ -622,12 +640,14 @@ def _fetch_ticket_rows(start: date, end: date) -> List[_TicketRow]:
             created = _parse_es_datetime(src.get("created_at"))
             if not created:
                 continue
+            is_draft = src.get("status") == DRAFT_STATUS
             rows.append(_TicketRow(
                 ticket_id=str(src.get("ticket_id") or hit.get("_id")),
                 day=created.astimezone(DASHBOARD_TZ).date(),
                 category=(src.get("category") or "").strip() or UNCATEGORIZED,
                 sub_category=(src.get("sub_category") or "").strip() or UNCATEGORIZED,
-                is_draft=src.get("status") == DRAFT_STATUS,
+                is_draft=is_draft,
+                draft_count=_draft_count(src) if is_draft else 0,
             ))
     except Exception as exc:
         logger.error("[dashboard] Failed to scan user tickets index '%s': %s", user_tickets_index, exc)
@@ -636,22 +656,25 @@ def _fetch_ticket_rows(start: date, end: date) -> List[_TicketRow]:
             detail=f"Error querying ticket index: {exc}",
         ) from exc
 
-    # Latest feedback per drafted ticket decides accepted vs rejected.
-    draft_ids = list({r.ticket_id for r in rows if r.is_draft})
-    latest: Dict[str, Tuple[datetime, Optional[bool]]] = {}
-    epoch = datetime.min.replace(tzinfo=timezone.utc)
+    # Feedback is stored per (ticket_id, draft_id); count helpful / not-helpful per ticket.
+    draft_rows = {r.ticket_id: r for r in rows if r.is_draft}
+    draft_ids = list(draft_rows)
     try:
         for i in range(0, len(draft_ids), _FEEDBACK_CHUNK):
             fb_query = {
                 "query": {"bool": {"filter": [{"terms": {"ticket_id": draft_ids[i:i + _FEEDBACK_CHUNK]}}]}},
-                "_source": ["ticket_id", "is_helpful", "submitted_on"],
+                "_source": ["ticket_id", "is_helpful"],
             }
             for hit in helpers.scan(es_manager.client, index=feedback_index, query=fb_query, size=1000):
                 src = hit.get("_source", {})
-                tid = str(src.get("ticket_id"))
-                submitted = _parse_es_datetime(src.get("submitted_on")) or epoch
-                if tid not in latest or submitted >= latest[tid][0]:
-                    latest[tid] = (submitted, _parse_is_helpful(src.get("is_helpful")))
+                row = draft_rows.get(str(src.get("ticket_id")))
+                if row is None:
+                    continue
+                verdict = _parse_is_helpful(src.get("is_helpful"))
+                if verdict is True:
+                    row.helpful_count += 1
+                elif verdict is False:
+                    row.not_helpful_count += 1
     except Exception as exc:
         logger.error("[dashboard] Failed to scan feedback index '%s': %s", feedback_index, exc)
         raise HTTPException(
@@ -659,9 +682,6 @@ def _fetch_ticket_rows(start: date, end: date) -> List[_TicketRow]:
             detail=f"Error querying feedback index: {exc}",
         ) from exc
 
-    for r in rows:
-        if r.is_draft and r.ticket_id in latest:
-            r.is_accepted = latest[r.ticket_id][1]
     return rows
 
 
