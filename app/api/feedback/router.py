@@ -102,7 +102,7 @@ def _ticket_has_draft(ticket_id: str, draft_id: str) -> Tuple[bool, bool]:
         res = es_manager.client.get(
             index=es_manager.user_tickets_index,
             id=ticket_id,
-            source_includes=["ticket_id", "zoho_draft_id", "zoho_draft_ids"],
+            _source=["ticket_id", "zoho_draft_id", "zoho_draft_ids"],
         )
     except NotFoundError:
         return False, False
