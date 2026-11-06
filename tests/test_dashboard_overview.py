@@ -21,7 +21,7 @@ client = TestClient(app)
 IST = ZoneInfo("Asia/Kolkata")
 FROZEN_NOW = datetime(2026, 10, 16, 18, 30, tzinfo=IST)
 URL = "/api/v1/dashboard/overview"
-COUNT_KEYS = ["tickets_received", "drafts_created", "drafts_accepted", "drafts_rejected", "drafts_pending"]
+COUNT_KEYS = ["tickets_received", "tickets_processed", "drafts_created", "drafts_accepted", "drafts_rejected", "drafts_pending"]
 
 
 def _utc(y, mo, d, h, mi=0) -> str:
@@ -29,42 +29,47 @@ def _utc(y, mo, d, h, mi=0) -> str:
     return datetime(y, mo, d, h, mi, tzinfo=IST).astimezone(timezone.utc).isoformat()
 
 
-def _ticket(tid, created_at, category, sub_category, status):
-    return {"ticket_id": tid, "created_at": created_at, "category": category,
-            "sub_category": sub_category, "status": status}
+def _ticket(tid, created_at, category, sub_category, status, draft_ids=None):
+    doc = {"ticket_id": tid, "created_at": created_at, "category": category,
+           "sub_category": sub_category, "status": status}
+    if draft_ids:
+        doc["zoho_draft_ids"] = draft_ids
+        doc["zoho_draft_id"] = draft_ids[-1]
+    return doc
 
 
-def _feedback(tid, is_helpful, submitted_on):
-    return {"ticket_id": tid, "is_helpful": is_helpful, "submitted_on": submitted_on}
+def _feedback(tid, draft_id, is_helpful, submitted_on):
+    return {"ticket_id": tid, "draft_id": draft_id, "is_helpful": is_helpful, "submitted_on": submitted_on}
 
 
 TICKETS = [
     # October 2026
-    _ticket("t1", _utc(2026, 10, 1, 10), "content_related_issue", "certificate_issue", "resolved"),
-    _ticket("t2", _utc(2026, 10, 2, 11), "content_related_issue", "certificate_issue", "resolved"),
-    _ticket("t3", _utc(2026, 10, 6, 12), "content_related_issue", "enrolment_issues", "resolved"),
+    _ticket("t1", _utc(2026, 10, 1, 10), "content_related_issue", "certificate_issue", "resolved", ["d1"]),
+    _ticket("t2", _utc(2026, 10, 2, 11), "content_related_issue", "certificate_issue", "resolved", ["d1", "d2"]),
+    _ticket("t3", _utc(2026, 10, 6, 12), "content_related_issue", "enrolment_issues", "resolved", ["d1", "d2"]),
     _ticket("t4", _utc(2026, 10, 7, 9), "profile_and_user_management", "profile_update", "escalated"),
+    # Older record without draft ids → counts as one draft.
     _ticket("t5", _utc(2026, 10, 13, 15), "general", "", "resolved"),
     # 00:30 IST on the 16th is still the 15th in UTC — must be bucketed as the 16th.
-    _ticket("t6", _utc(2026, 10, 16, 0, 30), "ca_apar_issue", "cap_final_assessment_locked", "resolved"),
+    _ticket("t6", _utc(2026, 10, 16, 0, 30), "ca_apar_issue", "cap_final_assessment_locked", "resolved", ["d1"]),
     _ticket("t7", _utc(2026, 10, 14, 10), "junk", "", "resolved"),
     _ticket("t8", _utc(2026, 10, 16, 9), "profile_and_user_management", "profile_update", "open"),
     # September 2026 — 23:30 IST on the 30th is September, not October.
-    _ticket("s1", _utc(2026, 9, 30, 23, 30), "content_related_issue", "certificate_issue", "resolved"),
+    _ticket("s1", _utc(2026, 9, 30, 23, 30), "content_related_issue", "certificate_issue", "resolved", ["d1"]),
     _ticket("s2", _utc(2026, 9, 10, 10), "profile_and_user_management", "access_revoked", "escalated"),
 ]
 
 FEEDBACK = [
-    _feedback("t1", True, _utc(2026, 10, 1, 14)),
-    # Deleted first, then a revised draft was sent → latest wins → accepted.
-    _feedback("t2", False, _utc(2026, 10, 2, 12)),
-    _feedback("t2", True, _utc(2026, 10, 2, 16)),
-    # Sent first, then deleted → rejected.
-    _feedback("t3", True, _utc(2026, 10, 6, 13)),
-    _feedback("t3", False, _utc(2026, 10, 7, 10)),
+    _feedback("t1", "d1", True, _utc(2026, 10, 1, 14)),
+    # Two drafts: first unhelpful, second helpful → 1 accepted + 1 rejected.
+    _feedback("t2", "d1", False, _utc(2026, 10, 2, 12)),
+    _feedback("t2", "d2", True, _utc(2026, 10, 2, 16)),
+    # Two drafts, both unhelpful → 2 rejected.
+    _feedback("t3", "d1", False, _utc(2026, 10, 6, 13)),
+    _feedback("t3", "d2", False, _utc(2026, 10, 7, 10)),
     # t5 has no feedback → pending, not rejected.
-    _feedback("t6", True, _utc(2026, 10, 16, 10)),
-    _feedback("s1", True, _utc(2026, 10, 1, 9)),
+    _feedback("t6", "d1", True, _utc(2026, 10, 16, 10)),
+    _feedback("s1", "d1", True, _utc(2026, 10, 1, 9)),
 ]
 
 
@@ -88,7 +93,7 @@ def _fake_scan(_client, index, query, size=1000, **_):
         ids = set(bool_q["filter"][0]["terms"]["ticket_id"])
         for f in FEEDBACK:
             if f["ticket_id"] in ids:
-                yield {"_id": f"fb-{f['ticket_id']}", "_source": f}
+                yield {"_id": f"{f['ticket_id']}_{f['draft_id']}", "_source": f}
 
 
 @pytest.fixture
@@ -142,22 +147,29 @@ def test_slugify():
     assert dashboard._slugify("***") == "uncategorized"
 
 
-def test_metrics_counts_only_drafts_for_acceptance():
+def test_metrics_sums_helpful_and_not_helpful_counts():
     rows = [
-        dashboard._TicketRow("a", date(2026, 10, 1), "c", "s", is_draft=True, is_accepted=True),
-        dashboard._TicketRow("b", date(2026, 10, 1), "c", "s", is_draft=True, is_accepted=False),
-        dashboard._TicketRow("c", date(2026, 10, 1), "c", "s", is_draft=True),
+        dashboard._TicketRow("a", date(2026, 10, 1), "c", "s", is_draft=True, draft_count=1, helpful_count=1),
+        dashboard._TicketRow("b", date(2026, 10, 1), "c", "s", is_draft=True, draft_count=3, not_helpful_count=2),
+        dashboard._TicketRow("c", date(2026, 10, 1), "c", "s", is_draft=True, draft_count=1),
         dashboard._TicketRow("d", date(2026, 10, 1), "c", "s", is_draft=False),
     ]
     m = dashboard._metrics(rows)
-    assert (m.tickets_received, m.drafts_created, m.drafts_accepted, m.drafts_rejected, m.drafts_pending) == \
-        (4, 3, 1, 1, 1)
-    assert m.success_rate == 33.3      # 1 / 3 drafts created
-    assert m.draft_coverage == 75.0
+    assert (m.tickets_received, m.tickets_processed, m.drafts_created, m.drafts_accepted,
+            m.drafts_rejected, m.drafts_pending) == (4, 3, 5, 1, 2, 2)
+    assert m.success_rate == 20.0      # 1 / 5 drafts created
+
+
+def test_metrics_pending_never_negative():
+    # Feedback on more drafts than the ticket records (e.g. older data) must not make pending negative.
+    rows = [dashboard._TicketRow("a", date(2026, 10, 1), "c", "s", is_draft=True,
+                                 draft_count=1, helpful_count=1, not_helpful_count=1)]
+    m = dashboard._metrics(rows)
+    assert (m.drafts_created, m.drafts_accepted, m.drafts_rejected, m.drafts_pending) == (1, 1, 1, 0)
 
 
 def test_metrics_drafts_without_feedback_are_pending_not_rejected():
-    rows = [dashboard._TicketRow(t, date(2026, 10, 1), "c", "s", is_draft=True) for t in "abc"]
+    rows = [dashboard._TicketRow(t, date(2026, 10, 1), "c", "s", is_draft=True, draft_count=1) for t in "abc"]
     m = dashboard._metrics(rows)
     assert (m.drafts_created, m.drafts_accepted, m.drafts_rejected, m.drafts_pending) == (3, 0, 0, 3)
     assert m.success_rate == 0.0
@@ -176,7 +188,6 @@ def test_metrics_empty_has_null_rates():
     m = dashboard._metrics([])
     assert m.tickets_received == 0
     assert m.success_rate is None
-    assert m.draft_coverage is None
 
 
 # ── Endpoint ──────────────────────────────────────────────────────────────────
@@ -197,8 +208,8 @@ def test_overview_defaults_to_current_month(fake_es):
         ("2026-10", "2026-10-01", "2026-10-31", "2026-10-16")
     assert month["is_complete"] is False
     assert month["metrics"] == {
-        "tickets_received": 7, "drafts_created": 5, "drafts_accepted": 3, "drafts_rejected": 1,
-        "drafts_pending": 1, "success_rate": 60.0, "draft_coverage": 71.4,
+        "tickets_received": 7, "tickets_processed": 5, "drafts_created": 7, "drafts_accepted": 3,
+        "drafts_rejected": 3, "drafts_pending": 1, "success_rate": 42.9,
     }
 
 
@@ -210,11 +221,13 @@ def test_overview_excludes_junk(fake_es):
     assert week3["metrics"]["tickets_received"] == 3  # t5, t6, t8 — t7 (junk) excluded
 
 
-def test_overview_latest_feedback_decides_and_missing_feedback_is_pending(fake_es):
+def test_overview_feedback_counts_per_ticket_and_missing_feedback_is_pending(fake_es):
     cats = {c["name"]: c for c in client.get(URL).json()["month"]["categories"]}
     subs = {s["name"]: s["metrics"] for s in cats["content_related_issue"]["subcategories"]}
-    assert subs["certificate_issue"]["drafts_accepted"] == 2   # t1, t2 (deleted then sent)
-    assert subs["enrolment_issues"]["drafts_rejected"] == 1    # t3 (sent then deleted)
+    cert = subs["certificate_issue"]                            # t1 (1 helpful), t2 (1 helpful + 1 not)
+    assert (cert["tickets_processed"], cert["drafts_created"], cert["drafts_accepted"],
+            cert["drafts_rejected"], cert["drafts_pending"]) == (2, 3, 2, 1, 0)
+    assert subs["enrolment_issues"]["drafts_rejected"] == 2    # t3 (two unhelpful drafts)
     general = cats["general"]["metrics"]                        # t5 has no feedback
     assert (general["drafts_rejected"], general["drafts_pending"]) == (0, 1)
     assert general["success_rate"] == 0.0
@@ -260,8 +273,8 @@ def test_overview_daily_stops_at_today_and_uses_ist_dates(fake_es):
     day = body["day"]
     assert day["date"] == "2026-10-16" and day["is_today"] is True
     assert _counts(day["metrics"]) == {
-        "tickets_received": 2, "drafts_created": 1, "drafts_accepted": 1, "drafts_rejected": 0,
-        "drafts_pending": 0,
+        "tickets_received": 2, "tickets_processed": 1, "drafts_created": 1, "drafts_accepted": 1,
+        "drafts_rejected": 0, "drafts_pending": 0,
     }
     assert {c["name"] for c in day["categories"]} == {"ca_apar_issue", "profile_and_user_management"}
 
@@ -270,8 +283,8 @@ def test_overview_previous_month(fake_es):
     prev = client.get(URL).json()["previous_month"]
     assert prev["id"] == "2026-09"
     assert prev["metrics"] == {
-        "tickets_received": 2, "drafts_created": 1, "drafts_accepted": 1, "drafts_rejected": 0,
-        "drafts_pending": 0, "success_rate": 100.0, "draft_coverage": 50.0,
+        "tickets_received": 2, "tickets_processed": 1, "drafts_created": 1, "drafts_accepted": 1,
+        "drafts_rejected": 0, "drafts_pending": 0, "success_rate": 100.0,
     }
 
 
@@ -342,3 +355,17 @@ def test_overview_returns_500_when_ticket_scan_fails(fake_es):
     res = client.get(URL)
     assert res.status_code == 500
     assert "Error querying ticket index" in res.json()["detail"]
+
+
+def test_draft_count_uses_draft_ids_and_defaults_to_one():
+    assert dashboard._draft_count({"zoho_draft_ids": ["d1", "d2"], "zoho_draft_id": "d2"}) == 2
+    assert dashboard._draft_count({"zoho_draft_ids": ["d1"], "zoho_draft_id": "d3"}) == 2
+    assert dashboard._draft_count({}) == 1
+
+
+def test_fetch_ticket_rows_stores_helpful_counts_per_ticket(fake_es):
+    rows = {r.ticket_id: r for r in dashboard._fetch_ticket_rows(date(2026, 10, 1), date(2026, 10, 31))}
+    assert (rows["t2"].helpful_count, rows["t2"].not_helpful_count) == (1, 1)
+    assert (rows["t3"].helpful_count, rows["t3"].not_helpful_count) == (0, 2)
+    assert (rows["t5"].helpful_count, rows["t5"].not_helpful_count) == (0, 0)
+    assert (rows["t2"].draft_count, rows["t5"].draft_count, rows["t8"].draft_count) == (2, 1, 0)
